@@ -24,4 +24,6 @@ ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "src/train.py"]
+# Commande par défaut : étape finale (Contrôleur).
+# Pour les autres étapes, utiliser : docker compose run --rm trainer python src/X_script.py
+CMD ["python", "src/3_train_controller.py"]

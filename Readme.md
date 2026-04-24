@@ -1,64 +1,104 @@
 # World Model FPGA - Prototype Grid Routing
 
-Ce projet est la première étape de conception d'un **World Model** appliqué à l'automatisation du design de FPGA (Electronic Design Automation).
+Ce projet est la première étape de conception d'un **World Model** (Ha & Schmidhuber, 2018) appliqué à l'automatisation du design de FPGA. L'objectif est d'entraîner un agent à comprendre la dynamique d'une grille de routage via une abstraction MiniGrid.
 
-L'objectif actuel est d'entraîner un agent à comprendre la dynamique d'une grille de routage (via une abstraction MiniGrid) en séparant l'environnement de simulation du moteur d'entraînement.
+## Architecture V-M-C
 
-## Architecture du Projet
+Le système est une architecture **Vision–Mémoire–Contrôleur** distribuée en deux conteneurs Docker :
 
-Le système utilise une architecture **V-M-C** (Vision-Mémoire-Contrôleur) distribuée en deux conteneurs :
+```
+env_server ──REST API──► trainer
+ (FastAPI +              (PyTorch)
+  MiniGrid)
+```
 
-1. **`env_server` (Simulation)** : Serveur FastAPI hébergeant l'environnement MiniGrid. Il expose l'état du monde via une API REST.
-2. **`trainer` (Intelligence)** : Client PyTorch gérant le modèle de dynamique (World Model) et l'optimisation des actions.
+### Composants
 
-### Composants V-M-C (`src/model.py`)
+| Modèle | Classe | Fichier | Rôle |
+|---|---|---|---|
+| V (Vision) | `VAE` | `models/vae.py` | Encodeur CNN — compresse 3×7×7 → z (dim 32) |
+| M (Mémoire) | `MDNRNN` | `models/mdn_rnn.py` | LSTMCell + MDN — prédit p(z_{t+1} \| z_t, a_t) |
+| C (Contrôleur) | `Controller` | `models/controller.py` | Linéaire — [z, h] → 7 actions discrètes |
 
-| Modèle | Classe | Rôle |
-|---|---|---|
-| V (Vision) | `VisionModel` | Encodeur CNN — compresse l'image 3×7×7 en vecteur latent |
-| M (Mémoire) | `MemoryModel` | LSTMCell — maintient l'état caché de la dynamique du monde |
-| C (Contrôleur) | `Controller` | MLP — produit les logits d'action depuis (z, h) |
+### API REST (`env_server`, port 8000)
 
-### API REST (`env_server`)
-
-| Méthode | Endpoint | Description |
-|---|---|---|
-| `GET` | `/reset` | Réinitialise l'environnement, retourne `{ "obs": [[[int]]] }` |
-| `POST` | `/step` | Exécute `{ "action": int }`, retourne `{ "obs", "reward", "done" }` |
+| Méthode | Endpoint | Corps | Réponse |
+|---|---|---|---|
+| `GET` | `/reset` | — | `{ "obs": [[[int]]] }` (7×7×3) |
+| `POST` | `/step` | `{ "action": int }` | `{ "obs", "reward": float, "done": bool }` |
 
 ## Structure des fichiers
 
 ```
-.
-├── src/
-│   ├── server.py      # Environnement (FastAPI + MiniGrid)
-│   ├── client.py      # Boucle d'entraînement (PyTorch)
-│   └── model.py       # Définitions VisionModel, MemoryModel, Controller
-├── docker-compose.yml # Orchestration des conteneurs
-└── Dockerfile         # Image Python avec torch, gymnasium, minigrid
+src/
+├── models/
+│   ├── __init__.py
+│   ├── vae.py           # VAE (β-VAE, loss ELBO)
+│   ├── mdn_rnn.py       # LSTM + Mixture Density Network
+│   └── controller.py    # Contrôleur linéaire
+├── server.py            # Serveur FastAPI + MiniGrid
+├── utils.py             # Normalisation obs, retry HTTP, constantes
+├── 1_collect_data.py    # Collecte 10 000 transitions aléatoires → data/
+├── 2_train_world.py     # Entraîne VAE puis MDN-RNN → checkpoints/
+└── 3_train_controller.py # REINFORCE sur le Contrôleur → checkpoints/
+data/                    # Créé à l'exécution (monté en volume Docker)
+checkpoints/             # Créé à l'exécution (monté en volume Docker)
 ```
 
 ## Lancer le projet
 
+### Démarrage de l'infrastructure
+
 ```bash
-docker-compose up
+# Construit les images et démarre env_server + trainer (en arrière-plan)
+docker compose up -d --build
 ```
 
-Cela démarre `env_server` (port 8000) puis `trainer` automatiquement.
+### Étape 1 — Collecte de données (~10 000 transitions)
 
-**Sans Docker :**
+```bash
+docker compose exec trainer python src/1_collect_data.py
+```
+
+Les épisodes sont sauvegardés dans `data/episode_XXXXXX.npz` sur l'hôte (volume monté).
+
+### Étape 2 — Entraînement du World Model (VAE + MDN-RNN)
+
+```bash
+# Pas besoin de env_server — travaille uniquement sur les données collectées
+docker compose run --rm trainer python src/2_train_world.py
+```
+
+Produit `checkpoints/vae.pt` et `checkpoints/mdn_rnn.pt`.
+
+### Étape 3 — Entraînement du Contrôleur (REINFORCE)
+
+```bash
+docker compose exec trainer python src/3_train_controller.py
+```
+
+Produit `checkpoints/controller.pt`, mis à jour tous les 100 épisodes.
+
+### Sans Docker
 
 ```bash
 # Terminal 1
 python src/server.py
 
-# Terminal 2 — modifier SERVER_URL dans client.py : "http://localhost:8000"
-python src/client.py
+# Terminal 2 — modifier SERVER_URL = "http://localhost:8000" dans utils.py ou les scripts
+python src/1_collect_data.py
+python src/2_train_world.py
+python src/3_train_controller.py
 ```
 
-## État actuel
+## Progression de l'implémentation
 
-- [x] Serveur MiniGrid fonctionnel avec API REST
-- [x] Architecture V-M-C instanciée et forward pass complet
-- [ ] Calcul de la loss (RL / VAE) — non encore implémenté
-- [ ] Étape d'optimisation (`optimizer.step()`) — non encore implémentée
+- [x] Serveur MiniGrid (FastAPI)
+- [x] Modèle V — VAE (encodeur CNN, loss ELBO)
+- [x] Modèle M — MDN-RNN (LSTM + Mixture of Gaussians)
+- [x] Modèle C — Contrôleur linéaire (REINFORCE)
+- [x] Pipeline de collecte de données
+- [x] Pipeline d'entraînement modulaire (3 scripts)
+- [ ] Calcul de la loss RL complète (reward model)
+- [ ] Entraînement dans le monde imaginé (sans env_server)
+- [ ] Évaluation quantitative (reward cumulatif, courbes)

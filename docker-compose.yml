@@ -12,8 +12,11 @@ services:
   trainer:
     build: .
     container_name: minigrid_trainer
-    command: python src/client.py
-    # Assure que le jeu démarre avant l'entraînement
+    # Lancer les étapes manuellement (voir README — section "Lancer le projet")
+    command: sleep infinity
     depends_on:
       - env_server
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
       
