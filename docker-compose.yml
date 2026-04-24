@@ -1,0 +1,19 @@
+#version: '3.8'
+
+services:
+  env_server:
+    build: .
+    container_name: minigrid_server
+    command: python src/server.py
+    # Expose le port pour que le conteneur trainer y accède
+    expose:
+      - "8000"
+
+  trainer:
+    build: .
+    container_name: minigrid_trainer
+    command: python src/client.py
+    # Assure que le jeu démarre avant l'entraînement
+    depends_on:
+      - env_server
+      
