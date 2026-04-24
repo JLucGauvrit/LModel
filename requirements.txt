@@ -1,0 +1,9 @@
+gymnasium
+minigrid
+fastapi
+uvicorn
+requests
+pydantic
+torch
+numpy
+pdoc
