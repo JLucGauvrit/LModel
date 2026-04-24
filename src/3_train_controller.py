@@ -13,15 +13,18 @@ L'agent agit directement dans l'environnement réel via l'API env_server :
 
 Sortie :
   checkpoints/controller.pt
+  runs/controller/  ← logs TensorBoard
 
 Usage :
   python src/3_train_controller.py
 """
 
 import os
+from collections import deque
 
 import requests
 import torch
+from torch.utils.tensorboard import SummaryWriter
 
 from models import VAE, MDNRNN, Controller
 from utils import (
@@ -31,11 +34,13 @@ from utils import (
 
 SERVER_URL = "http://env_server:8000"
 CHECKPOINT_DIR = "checkpoints"
+RUNS_DIR = "runs/controller"
 
 NUM_EPISODES = 1000
 GAMMA = 0.99
 LR = 1e-3
 SAVE_EVERY = 100
+REWARD_WINDOW = 20  # taille de la fenêtre glissante pour la moyenne de récompense
 
 
 def load_world_model(device: torch.device) -> tuple[VAE, MDNRNN]:
@@ -49,7 +54,7 @@ def load_world_model(device: torch.device) -> tuple[VAE, MDNRNN]:
     :raises FileNotFoundError: Si un checkpoint est manquant.
     """
     paths = {
-        "vae": os.path.join(CHECKPOINT_DIR, "vae.pt"),
+        "vae":     os.path.join(CHECKPOINT_DIR, "vae.pt"),
         "mdn_rnn": os.path.join(CHECKPOINT_DIR, "mdn_rnn.pt"),
     }
     for name, path in paths.items():
@@ -66,10 +71,8 @@ def load_world_model(device: torch.device) -> tuple[VAE, MDNRNN]:
         p.requires_grad_(False)
 
     mdn_rnn = MDNRNN(
-        latent_dim=LATENT_DIM,
-        action_dim=ACTION_DIM,
-        hidden_dim=HIDDEN_DIM,
-        num_gaussians=NUM_GAUSSIANS,
+        latent_dim=LATENT_DIM, action_dim=ACTION_DIM,
+        hidden_dim=HIDDEN_DIM, num_gaussians=NUM_GAUSSIANS,
     ).to(device)
     mdn_rnn.load_state_dict(torch.load(paths["mdn_rnn"], map_location=device))
     mdn_rnn.eval()
@@ -137,12 +140,12 @@ def run_episode(
             z, _ = vae.encode(obs)
 
         action_logits = controller(z, h)
-        dist = torch.distributions.Categorical(logits=action_logits)
+        dist   = torch.distributions.Categorical(logits=action_logits)
         action = dist.sample()
         log_probs.append(dist.log_prob(action))
 
-        res = request_with_retry(session, "POST", f"{SERVER_URL}/step",
-                                 json={"action": action.item()})
+        res  = request_with_retry(session, "POST", f"{SERVER_URL}/step",
+                                  json={"action": action.item()})
         data = res.json()
 
         rewards.append(float(data["reward"]))
@@ -160,7 +163,12 @@ def train_controller() -> None:
     """
     Boucle principale d'entraînement REINFORCE sur NUM_EPISODES épisodes.
 
-    Affiche la récompense totale et la loss à chaque épisode.
+    Métriques loggées dans TensorBoard :
+      - ``Controller/reward``       — récompense totale de l'épisode
+      - ``Controller/reward_avg``   — moyenne glissante sur REWARD_WINDOW épisodes
+      - ``Controller/episode_steps`` — nombre de pas de l'épisode
+      - ``Controller/policy_loss``  — loss REINFORCE
+
     Sauvegarde le Contrôleur tous les SAVE_EVERY épisodes et en fin d'entraînement.
 
     :returns: None
@@ -175,7 +183,11 @@ def train_controller() -> None:
     optimizer = torch.optim.Adam(controller.parameters(), lr=LR)
 
     session = requests.Session()
+    writer  = SummaryWriter(log_dir=RUNS_DIR)
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+    reward_window: deque[float] = deque(maxlen=REWARD_WINDOW)
+    print(f"TensorBoard → {RUNS_DIR}")
     print(f"\nDébut entraînement Contrôleur — {NUM_EPISODES} épisodes...\n")
 
     for episode in range(1, NUM_EPISODES + 1):
@@ -187,15 +199,29 @@ def train_controller() -> None:
         loss.backward()
         optimizer.step()
 
-        print(f"  Épisode {episode:4d}/{NUM_EPISODES} | Steps : {len(rewards):3d} | "
-              f"Reward : {sum(rewards):6.3f} | Loss : {loss.item():7.4f}")
+        total_reward = sum(rewards)
+        reward_window.append(total_reward)
+        avg_reward = sum(reward_window) / len(reward_window)
+
+        # --- TensorBoard ---
+        writer.add_scalar("Controller/reward",        total_reward,      episode)
+        writer.add_scalar("Controller/reward_avg",    avg_reward,        episode)
+        writer.add_scalar("Controller/episode_steps", len(rewards),      episode)
+        writer.add_scalar("Controller/policy_loss",   loss.item(),       episode)
+
+        print(f"  Ep {episode:4d}/{NUM_EPISODES} | "
+              f"Steps {len(rewards):3d} | "
+              f"Reward {total_reward:6.3f} | "
+              f"Avg({REWARD_WINDOW}) {avg_reward:6.3f} | "
+              f"Loss {loss.item():8.4f}")
 
         if episode % SAVE_EVERY == 0:
             ckpt = os.path.join(CHECKPOINT_DIR, "controller.pt")
             torch.save(controller.state_dict(), ckpt)
-            print(f"  → Checkpoint sauvegardé : {ckpt}\n")
+            print(f"  → Checkpoint : {ckpt}\n")
 
     torch.save(controller.state_dict(), os.path.join(CHECKPOINT_DIR, "controller.pt"))
+    writer.close()
     print("\nEntraînement du Contrôleur terminé.")
 
 

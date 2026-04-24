@@ -8,6 +8,7 @@ Phase 2 : encode les séquences avec le VAE gelé, entraîne le MDN-RNN
 Sorties :
   checkpoints/vae.pt
   checkpoints/mdn_rnn.pt
+  runs/world_model/  ← logs TensorBoard
 
 Usage :
   python src/2_train_world.py
@@ -19,12 +20,14 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.tensorboard import SummaryWriter
 
 from models import VAE, MDNRNN
 from utils import LATENT_DIM, HIDDEN_DIM, ACTION_DIM, NUM_GAUSSIANS, obs_array_to_tensor
 
 DATA_DIR = "data"
 CHECKPOINT_DIR = "checkpoints"
+RUNS_DIR = "runs/world_model"
 
 # --- Hyperparamètres ---
 VAE_EPOCHS = 20
@@ -102,19 +105,28 @@ class EpisodeDataset(Dataset):
         return self.sequences[idx]
 
 
-def train_vae(device: torch.device) -> VAE:
+def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
     """
     Phase 1 : entraîne le VAE sur toutes les observations collectées.
 
     Minimise la loss ELBO = MSE reconstruction + KL divergence.
     Sauvegarde les poids dans ``checkpoints/vae.pt``.
 
+    Métriques loggées dans TensorBoard :
+      - ``VAE/loss_total``
+      - ``VAE/loss_reconstruction``
+      - ``VAE/loss_kl``
+
     :param device: Device d'entraînement (CPU ou CUDA).
     :type device: torch.device
+    :param writer: SummaryWriter TensorBoard partagé.
+    :type writer: SummaryWriter
     :returns: VAE entraîné et en mode ``eval()``.
     :rtype: VAE
     """
     print("\n=== Phase 1 : Entraînement du VAE ===")
+    import torch.nn.functional as F
+
     dataset = TransitionDataset(DATA_DIR)
     loader = DataLoader(dataset, batch_size=VAE_BATCH, shuffle=True,
                         num_workers=2, pin_memory=device.type == "cuda")
@@ -124,17 +136,31 @@ def train_vae(device: torch.device) -> VAE:
 
     for epoch in range(VAE_EPOCHS):
         vae.train()
-        total_loss = 0.0
+        total_loss = total_recon = total_kl = 0.0
+
         for obs_batch, _, _ in loader:
             x = obs_array_to_tensor(obs_batch.numpy(), device)
             x_recon, mu, log_var = vae(x)
-            loss = VAE.loss(x, x_recon, mu, log_var)
+
+            recon = F.mse_loss(x_recon, x, reduction="sum") / x.size(0)
+            kl    = -0.5 * torch.mean(1 + log_var - mu.pow(2) - log_var.exp())
+            loss  = recon + kl
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
 
-        print(f"  Epoch {epoch + 1:02d}/{VAE_EPOCHS} | Loss : {total_loss / len(loader):.4f}")
+            total_loss  += loss.item()
+            total_recon += recon.item()
+            total_kl    += kl.item()
+
+        n = len(loader)
+        writer.add_scalar("VAE/loss_total",          total_loss  / n, epoch)
+        writer.add_scalar("VAE/loss_reconstruction", total_recon / n, epoch)
+        writer.add_scalar("VAE/loss_kl",             total_kl    / n, epoch)
+
+        print(f"  Epoch {epoch + 1:02d}/{VAE_EPOCHS} | "
+              f"Total {total_loss/n:.4f} | Recon {total_recon/n:.4f} | KL {total_kl/n:.4f}")
 
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     torch.save(vae.state_dict(), os.path.join(CHECKPOINT_DIR, "vae.pt"))
@@ -143,7 +169,7 @@ def train_vae(device: torch.device) -> VAE:
     return vae
 
 
-def train_mdn_rnn(vae: VAE, device: torch.device) -> MDNRNN:
+def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNRNN:
     """
     Phase 2 : entraîne le MDN-RNN sur des séquences de vecteurs latents.
 
@@ -154,10 +180,15 @@ def train_mdn_rnn(vae: VAE, device: torch.device) -> MDNRNN:
     Minimise la NLL du mélange de gaussiennes sur z_{t+1}.
     Sauvegarde les poids dans ``checkpoints/mdn_rnn.pt``.
 
+    Métriques loggées dans TensorBoard :
+      - ``MDNRNN/loss_nll``
+
     :param vae: VAE pré-entraîné et gelé.
     :type vae: VAE
     :param device: Device d'entraînement.
     :type device: torch.device
+    :param writer: SummaryWriter TensorBoard partagé.
+    :type writer: SummaryWriter
     :returns: MDN-RNN entraîné et en mode ``eval()``.
     :rtype: MDNRNN
     """
@@ -183,7 +214,6 @@ def train_mdn_rnn(vae: VAE, device: torch.device) -> MDNRNN:
         for obs_seq, next_obs_seq, action_seq in loader:
             B, T = obs_seq.shape[:2]
 
-            # Encodage en batch de toute la séquence (B*T observations à la fois)
             with torch.no_grad():
                 z_flat, _ = vae.encode(
                     obs_array_to_tensor(obs_seq.numpy().reshape(B * T, 7, 7, 3), device)
@@ -192,7 +222,7 @@ def train_mdn_rnn(vae: VAE, device: torch.device) -> MDNRNN:
                     obs_array_to_tensor(next_obs_seq.numpy().reshape(B * T, 7, 7, 3), device)
                 )
 
-            z = z_flat.view(B, T, LATENT_DIM)
+            z      = z_flat.view(B, T, LATENT_DIM)
             z_next = z_next_flat.view(B, T, LATENT_DIM)
             actions = action_seq.to(device)
 
@@ -210,7 +240,9 @@ def train_mdn_rnn(vae: VAE, device: torch.device) -> MDNRNN:
             optimizer.step()
             total_loss += loss.item()
 
-        print(f"  Epoch {epoch + 1:02d}/{MDNRNN_EPOCHS} | NLL : {total_loss / len(loader):.4f}")
+        avg = total_loss / len(loader)
+        writer.add_scalar("MDNRNN/loss_nll", avg, epoch)
+        print(f"  Epoch {epoch + 1:02d}/{MDNRNN_EPOCHS} | NLL : {avg:.4f}")
 
     torch.save(mdn_rnn.state_dict(), os.path.join(CHECKPOINT_DIR, "mdn_rnn.pt"))
     print(f"→ MDN-RNN sauvegardé dans {CHECKPOINT_DIR}/mdn_rnn.pt")
@@ -226,6 +258,10 @@ if __name__ == "__main__":
         print(f"Erreur : aucun fichier .npz dans '{DATA_DIR}/'. Lancez 1_collect_data.py d'abord.")
         raise SystemExit(1)
 
-    vae = train_vae(device)
-    train_mdn_rnn(vae, device)
+    writer = SummaryWriter(log_dir=RUNS_DIR)
+    print(f"TensorBoard → {RUNS_DIR}")
+
+    vae = train_vae(device, writer)
+    train_mdn_rnn(vae, device, writer)
+    writer.close()
     print("\nWorld Model entraîné avec succès.")

@@ -1,4 +1,5 @@
 # --- Étape 1 : Builder ---
+# Image légère : pas de torch, uniquement l'environnement MiniGrid + FastAPI
 FROM python:3.10-slim AS builder
 
 WORKDIR /app
@@ -7,23 +8,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Installation des dépendances dans un dossier local pour faciliter le transfert
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+COPY requirements.server.txt .
+RUN pip install --user --no-cache-dir -r requirements.server.txt
 
 # --- Étape 2 : Runner ---
 FROM python:3.10-slim AS runner
 
 WORKDIR /app
 
-
 COPY --from=builder /root/.local /root/.local
-COPY src/ ./src/
+# Seul server.py est nécessaire — les autres src/ sont syncés par docker compose watch
+COPY src/server.py ./src/
 
 ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/root/.local/lib/python3.10/site-packages:$PYTHONPATH
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Commande par défaut : étape finale (Contrôleur).
-# Pour les autres étapes, utiliser : docker compose run --rm trainer python src/X_script.py
-CMD ["python", "src/3_train_controller.py"]
+CMD ["python", "src/server.py"]

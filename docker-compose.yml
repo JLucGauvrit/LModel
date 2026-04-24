@@ -1,22 +1,55 @@
-#version: '3.8'
-
 services:
+
   env_server:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.server
     container_name: minigrid_server
     command: python src/server.py
-    # Expose le port pour que le conteneur trainer y accède
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"    # UI live : http://localhost:8000/ui
+    develop:
+      watch:
+        - path: ./src/server.py
+          action: sync+restart
+          target: /app/src/server.py
+        - path: ./requirements.server.txt
+          action: rebuild
 
   trainer:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.trainer
     container_name: minigrid_trainer
-    # Lancer les étapes manuellement (voir README — section "Lancer le projet")
     command: sleep infinity
     depends_on:
       - env_server
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
-      
+      - ./runs:/app/runs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    develop:
+      watch:
+        - path: ./src
+          action: sync
+          target: /app/src
+        - path: ./requirements.trainer.txt
+          action: rebuild
+
+  tensorboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.trainer
+    container_name: minigrid_tensorboard
+    command: tensorboard --logdir /app/runs --host 0.0.0.0 --port 6006
+    ports:
+      - "6006:6006"    # Dashboard métriques : http://localhost:6006
+    volumes:
+      - ./runs:/app/runs

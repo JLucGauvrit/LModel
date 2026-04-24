@@ -1,9 +1,7 @@
 gymnasium
 minigrid
 fastapi
-uvicorn
-requests
+uvicorn[standard]
 pydantic
-torch
 numpy
-pdoc
+pillow
