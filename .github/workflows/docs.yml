@@ -22,17 +22,30 @@ jobs:
           python-version: "3.10"
           cache: pip
 
-      # torch CPU-only (~300 Mo) pour éviter le téléchargement CUDA (~2 Go)
+      # torch CPU-only en CI — pas de GPU sur les runners GitHub
       - name: Install torch (CPU)
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install project dependencies + pdoc
-        run: pip install -r requirements.txt pdoc
+      # Dépendances server (gymnasium, minigrid, fastapi, pillow…)
+      - name: Install server dependencies
+        run: pip install -r requirements.server.txt
+
+      # Dépendances trainer (numpy, requests, tensorboard, pdoc)
+      - name: Install trainer dependencies
+        run: pip install -r requirements.trainer.txt
 
       - name: Generate PyDoc HTML
         env:
           PYTHONPATH: src
-        run: pdoc src/server.py src/client.py src/model.py --output-dir docs/
+        run: |
+          pdoc \
+            src/server.py \
+            src/utils.py \
+            src/1_collect_data.py \
+            src/2_train_world.py \
+            src/3_train_controller.py \
+            src/models/ \
+            --output-dir docs/
 
       # main → déployé à la racine de GitHub Pages
       - name: Deploy (main → /)
