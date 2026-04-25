@@ -33,6 +33,7 @@ from models import VAE, MDNRNN, Controller
 from utils import (
     obs_array_to_tensor,
     LATENT_DIM, HIDDEN_DIM, ACTION_DIM, NUM_GAUSSIANS,
+    write_status,
 )
 
 CHECKPOINT_DIR = "checkpoints"
@@ -209,6 +210,8 @@ def train_controller() -> None:
         writer.add_scalar("Controller/reward_avg",    avg_reward,   episode)
         writer.add_scalar("Controller/episode_steps", len(rewards), episode)
         writer.add_scalar("Controller/policy_loss",   loss.item(),  episode)
+        write_status(3, "Contrôleur — REINFORCE", episode, NUM_EPISODES,
+                     {"reward_avg": round(avg_reward, 3)})
 
         elapsed   = time.time() - t_start
         avg_ep    = elapsed / episode

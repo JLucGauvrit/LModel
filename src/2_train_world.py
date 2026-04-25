@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from models import VAE, MDNRNN
-from utils import LATENT_DIM, HIDDEN_DIM, ACTION_DIM, NUM_GAUSSIANS, obs_array_to_tensor
+from utils import LATENT_DIM, HIDDEN_DIM, ACTION_DIM, NUM_GAUSSIANS, obs_array_to_tensor, write_status
 
 DATA_DIR = "data"
 CHECKPOINT_DIR = "checkpoints"
@@ -161,6 +161,8 @@ def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
         writer.add_scalar("VAE/loss_total",          total_loss  / n, epoch)
         writer.add_scalar("VAE/loss_reconstruction", total_recon / n, epoch)
         writer.add_scalar("VAE/loss_kl",             total_kl    / n, epoch)
+        write_status(2, "World Model — VAE", epoch + 1, VAE_EPOCHS,
+                     {"loss": round(total_loss / n, 4)})
 
         elapsed   = time.time() - t_start
         avg_epoch = elapsed / (epoch + 1)
@@ -255,6 +257,8 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
         remaining = avg_ep * (MDNRNN_EPOCHS - epoch - 1)
         eta      = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
         writer.add_scalar("MDNRNN/loss_nll", avg, epoch)
+        write_status(2, "World Model — MDN-RNN", epoch + 1, MDNRNN_EPOCHS,
+                     {"nll": round(avg, 4)})
         print(f"[MDN-RNN] Epoch {epoch + 1:3d}/{MDNRNN_EPOCHS} | "
               f"nll={avg:.4f} | {eta} restant")
 

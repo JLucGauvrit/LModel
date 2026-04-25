@@ -21,6 +21,8 @@ import gymnasium as gym
 import minigrid  # noqa: F401 — enregistre les environnements MiniGrid
 import numpy as np
 
+from utils import write_status
+
 DATA_DIR = "data"
 TARGET_TRANSITIONS = 10_000
 MAX_STEPS_PER_EPISODE = 500
@@ -77,6 +79,7 @@ def collect_data() -> None:
         )
 
         episode_idx += 1
+        write_status(1, "Collecte de données", total, TARGET_TRANSITIONS)
         print(f"  Épisode {episode_idx:4d} | {len(action_list):3d} steps | "
               f"Total : {total}/{TARGET_TRANSITIONS}")
 

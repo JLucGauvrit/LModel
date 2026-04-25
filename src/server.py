@@ -1,186 +1,149 @@
-import io
+"""
+Dashboard de supervision d'entraînement V-M-C.
 
-import gymnasium as gym
-import minigrid
-import numpy as np
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, StreamingResponse
-from PIL import Image
-from pydantic import BaseModel
+Lit runs/status.json mis à jour par les scripts d'entraînement
+et sert une UI web rafraîchie toutes les secondes.
+
+Usage :
+  python src/server.py
+"""
+
+import json
+from pathlib import Path
+
 import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse
 
 app = FastAPI()
-env = gym.make("MiniGrid-Empty-8x8-v0", render_mode="rgb_array")
-env.reset()  # Initialise le rendu dès le démarrage
+_STATUS_FILE = Path("runs/status.json")
 
-# ---------------------------------------------------------------------------
-# Dashboard HTML — servi à http://localhost:8000/ui
-# ---------------------------------------------------------------------------
 _UI_HTML = """<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>MiniGrid — Live Dashboard</title>
+  <title>V-M-C Training</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #0d1117; color: #c9d1d9;
       font-family: 'Courier New', Courier, monospace;
       display: flex; flex-direction: column; align-items: center;
-      min-height: 100vh; padding: 2rem 1rem; gap: 1.5rem;
+      min-height: 100vh; padding: 2rem 1rem; gap: 2rem;
     }
     header { text-align: center; }
     header h1 { color: #58a6ff; font-size: 1.4rem; letter-spacing: 3px; text-transform: uppercase; }
     header p  { color: #6e7681; font-size: 0.8rem; margin-top: 0.3rem; }
-    #frame-container {
-      position: relative; border: 1px solid #30363d;
-      border-radius: 6px; overflow: hidden; line-height: 0;
+    .card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 1.5rem 2rem; width: 480px;
     }
-    #frame {
-      image-rendering: pixelated; image-rendering: crisp-edges;
-      width: 480px; height: 480px; display: block;
+    .card-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 1.2rem;
     }
-    #overlay {
-      position: absolute; bottom: 0; left: 0; right: 0;
-      background: rgba(0,0,0,0.65); padding: 0.4rem 0.8rem;
-      font-size: 0.75rem; color: #8b949e;
+    .label { color: #58a6ff; font-size: 1.05rem; }
+    .steps { display: flex; gap: 6px; }
+    .step-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #21262d; border: 1px solid #30363d;
+    }
+    .step-dot.done   { background: #3fb950; border-color: #3fb950; }
+    .step-dot.active { background: #58a6ff; border-color: #58a6ff;
+                       animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+    .progress-row {
       display: flex; justify-content: space-between;
+      font-size: 0.82rem; color: #8b949e; margin-bottom: 6px;
     }
-    #dot {
-      display: inline-block; width: 7px; height: 7px;
-      border-radius: 50%; background: #3fb950; margin-right: 5px;
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-    #dot.err { background: #f85149; animation: none; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-    .links { font-size: 0.8rem; color: #6e7681; }
-    .links a { color: #58a6ff; text-decoration: none; }
-    .links a:hover { text-decoration: underline; }
+    .bar-bg { background: #21262d; border-radius: 4px; height: 8px; overflow: hidden; }
+    .bar    { height: 100%; background: #3fb950; border-radius: 4px; transition: width 0.5s; }
+    .metrics { display: flex; gap: 2rem; margin-top: 1.2rem; }
+    .metric { font-size: 0.78rem; color: #6e7681; }
+    .metric span { display: block; color: #e6edf3; font-size: 1rem; margin-bottom: 2px; }
+    .updated { font-size: 0.72rem; color: #484f58; margin-top: 1rem; text-align: right; }
+    .waiting { color: #6e7681; font-size: 0.9rem; text-align: center; padding: 0.5rem 0; }
+    .footer { font-size: 0.78rem; color: #6e7681; }
+    .footer a { color: #58a6ff; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <header>
-    <h1>&#9889; MiniGrid — Live View</h1>
+    <h1>&#9889; V-M-C Training</h1>
     <p>World Model FPGA &mdash; Prototype Grid Routing</p>
   </header>
-  <div id="frame-container">
-    <img id="frame" src="/render" alt="game" />
-    <div id="overlay">
-      <span><span id="dot"></span><span id="st">Connexion...</span></span>
-      <span id="fps">— fps</span>
-    </div>
+
+  <div class="card" id="card">
+    <div class="waiting">En attente du démarrage...</div>
   </div>
-  <div class="links">
-    Métriques d'entraînement &rarr;
+
+  <div class="footer">
+    Courbes détaillées &rarr;
     <a href="http://localhost:6006" target="_blank">TensorBoard :6006</a>
   </div>
+
   <script>
-    const img = document.getElementById('frame');
-    const dot = document.getElementById('dot');
-    const st  = document.getElementById('st');
-    const fps = document.getElementById('fps');
-    let frames = 0, last = performance.now();
-    function tick() {
-      const n = new Image();
-      n.onload = () => {
-        img.src = n.src; frames++;
-        const now = performance.now();
-        if (now - last >= 1000) {
-          fps.textContent = frames + ' fps'; frames = 0; last = now;
+    async function refresh() {
+      try {
+        const d = await fetch('/status').then(r => r.json());
+        if (!d.label || d.step === 0) return;
+
+        const pct = d.total > 0 ? Math.min(100, Math.round(d.current / d.total * 100)) : 0;
+
+        let dots = '';
+        for (let i = 1; i <= 3; i++) {
+          const cls = i < d.step ? 'done' : i === d.step ? 'active' : '';
+          dots += `<div class="step-dot ${cls}" title="Étape ${i}"></div>`;
         }
-        dot.classList.remove('err');
-        st.textContent = new Date().toLocaleTimeString('fr-FR');
-      };
-      n.onerror = () => { dot.classList.add('err'); st.textContent = 'Hors ligne'; fps.textContent = '0 fps'; };
-      n.src = '/render?t=' + Date.now();
+
+        let metrics = '';
+        for (const [k, v] of Object.entries(d.metrics || {})) {
+          const fmt = typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(4) : v;
+          metrics += `<div class="metric"><span>${fmt}</span>${k}</div>`;
+        }
+
+        document.getElementById('card').innerHTML = `
+          <div class="card-header">
+            <div class="label">${d.label}</div>
+            <div class="steps">${dots}</div>
+          </div>
+          <div class="progress-row">
+            <span>Itération ${d.current} / ${d.total}</span>
+            <span>${pct}%</span>
+          </div>
+          <div class="bar-bg"><div class="bar" style="width:${pct}%"></div></div>
+          ${metrics ? `<div class="metrics">${metrics}</div>` : ''}
+          <div class="updated">mis à jour ${d.updated}</div>
+        `;
+      } catch (_) {}
     }
-    setInterval(tick, 200);
+    refresh();
+    setInterval(refresh, 1000);
   </script>
 </body>
 </html>"""
 
 
-# ---------------------------------------------------------------------------
-# Modèle de données
-# ---------------------------------------------------------------------------
-
-class Action(BaseModel):
+@app.get("/status")
+def status() -> JSONResponse:
     """
-    Corps de la requête POST /step.
+    Retourne l'état courant de l'entraînement depuis runs/status.json.
 
-    :param action: Indice de l'action (0–6, espace d'actions MiniGrid).
-    :type action: int
+    :returns: JSON ``{step, label, current, total, metrics, updated}``
+              ou objet vide si l'entraînement n'a pas encore démarré.
+    :rtype: JSONResponse
     """
-
-    action: int
-
-
-# ---------------------------------------------------------------------------
-# Endpoints API
-# ---------------------------------------------------------------------------
-
-@app.get("/reset")
-def reset() -> dict:
-    """
-    Réinitialise l'environnement et retourne l'observation initiale.
-
-    :returns: ``{ "obs": [[[int]]] }`` — image 7×7×3 sérialisée.
-    :rtype: dict
-    """
-    obs, _ = env.reset()
-    return {"obs": obs["image"].tolist()}
-
-
-@app.post("/step")
-def step(act: Action) -> dict:
-    """
-    Exécute une action et retourne la transition.
-
-    :param act: Action validée par Pydantic.
-    :type act: Action
-    :returns: ``{ "obs", "reward", "done" }``.
-    :rtype: dict
-    """
-    obs, reward, terminated, truncated, _ = env.step(act.action)
-    return {
-        "obs": obs["image"].tolist(),
-        "reward": float(reward),
-        "done": bool(terminated or truncated),
-    }
-
-
-@app.get("/render")
-def render():
-    """
-    Retourne le frame courant de l'environnement comme image PNG.
-
-    Utilisé par le dashboard ``/ui`` pour afficher le jeu en temps réel.
-    La réponse ne doit pas être mise en cache (``Cache-Control: no-store``).
-
-    :returns: Image PNG du frame courant.
-    :rtype: StreamingResponse
-    """
-    frame = env.render()
-    if frame is None:
-        frame = np.full((256, 256, 3), 60, dtype=np.uint8)
-    img = Image.fromarray(frame.astype(np.uint8))
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return StreamingResponse(
-        buf,
-        media_type="image/png",
-        headers={"Cache-Control": "no-store"},
-    )
+    if not _STATUS_FILE.exists():
+        return JSONResponse({"step": 0, "label": "", "current": 0, "total": 0,
+                             "metrics": {}, "updated": ""})
+    return JSONResponse(json.loads(_STATUS_FILE.read_text()))
 
 
 @app.get("/ui", response_class=HTMLResponse)
 def ui() -> str:
     """
-    Sert le dashboard HTML de visualisation live du jeu.
-
-    Affiche le frame courant rafraîchi toutes les 200 ms (~5 fps)
-    et un lien vers TensorBoard pour les métriques d'entraînement.
+    Sert le dashboard HTML de supervision d'entraînement.
 
     :returns: Page HTML complète.
     :rtype: str

@@ -35,3 +35,13 @@ services:
       - "6006:6006"    # Dashboard métriques : http://localhost:6006
     volumes:
       - ./runs:/app/runs
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: minigrid_dashboard
+    ports:
+      - "8000:8000"    # Supervision epochs : http://localhost:8000/ui
+    volumes:
+      - ./runs:/app/runs:ro

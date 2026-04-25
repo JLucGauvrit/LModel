@@ -4,6 +4,9 @@ Utilitaires partagés entre les scripts d'entraînement.
 Centralise la normalisation des observations et les constantes d'architecture.
 """
 
+import json
+import os
+import datetime
 import sys
 from typing import Any
 
@@ -56,3 +59,46 @@ def obs_array_to_tensor(
     arr = obs_array.astype(np.float32) / _OBS_NORM
     arr = arr.transpose(0, 3, 1, 2)  # (B, H, W, C) → (B, C, H, W)
     return torch.tensor(arr, device=device)
+
+
+_STATUS_PATH = os.path.join("runs", "status.json")
+
+
+def write_status(
+    step: int,
+    label: str,
+    current: int,
+    total: int,
+    metrics: dict | None = None,
+) -> None:
+    """
+    Écrit l'état courant de l'entraînement dans runs/status.json.
+
+    Utilise une écriture atomique (tmp + rename) pour éviter que le dashboard
+    lise un fichier partiel.
+
+    :param step: Numéro de l'étape courante (1, 2 ou 3).
+    :type step: int
+    :param label: Nom de la phase (ex: "World Model — VAE").
+    :type label: str
+    :param current: Itération courante (epoch, épisode, transitions...).
+    :type current: int
+    :param total: Nombre total d'itérations pour cette phase.
+    :type total: int
+    :param metrics: Métriques à afficher {nom: valeur}.
+    :type metrics: dict | None
+    :returns: None
+    """
+    os.makedirs("runs", exist_ok=True)
+    payload = {
+        "step": step,
+        "label": label,
+        "current": current,
+        "total": total,
+        "metrics": metrics or {},
+        "updated": datetime.datetime.now().strftime("%H:%M:%S"),
+    }
+    tmp = _STATUS_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f)
+    os.replace(tmp, _STATUS_PATH)
