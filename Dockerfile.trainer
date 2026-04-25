@@ -1,0 +1,36 @@
+# --- Étape 1 : Builder ---
+# torch CUDA 12.4 — compatible driver 580.x (RTX 2060 SUPER, compute 7.5)
+FROM python:3.10-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Layer 1 : torch avec support CUDA 12.4 (grosse layer ~2.5 Go, stable → cache efficace)
+# PyTorch embarque ses propres libs CUDA — pas besoin d'une image nvidia/cuda
+RUN pip install --user --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cu124
+
+# Layer 2 : dépendances légères (invalidée seulement si requirements.trainer.txt change)
+COPY requirements.trainer.txt .
+RUN pip install --user --no-cache-dir -r requirements.trainer.txt
+
+# --- Étape 2 : Runner ---
+FROM python:3.10-slim AS runner
+
+WORKDIR /app
+
+COPY --from=builder /root/.local /root/.local
+COPY src/ ./src/
+
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/root/.local/lib/python3.10/site-packages:$PYTHONPATH
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+# Force l'utilisation du GPU le plus puissant (RTX 2060 SUPER = device 1)
+# Commentez cette ligne pour utiliser tous les GPUs
+ENV CUDA_VISIBLE_DEVICES=0,1
+
+CMD ["python", "src/3_train_controller.py"]

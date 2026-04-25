@@ -1,19 +1,47 @@
-#version: '3.8'
-
 services:
-  env_server:
-    build: .
-    container_name: minigrid_server
-    command: python src/server.py
-    # Expose le port pour que le conteneur trainer y accède
-    expose:
-      - "8000"
 
   trainer:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.trainer
     container_name: minigrid_trainer
-    command: python src/client.py
-    # Assure que le jeu démarre avant l'entraînement
-    depends_on:
-      - env_server
-      
+    command: python src/train_all.py
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./runs:/app/runs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    develop:
+      watch:
+        - path: ./src
+          action: sync
+          target: /app/src
+        - path: ./requirements.trainer.txt
+          action: rebuild
+
+  tensorboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.trainer
+    container_name: minigrid_tensorboard
+    command: tensorboard --logdir /app/runs --host 0.0.0.0 --port 6006 --load_fast=false
+    ports:
+      - "6006:6006"    # Dashboard métriques : http://localhost:6006
+    volumes:
+      - ./runs:/app/runs
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: minigrid_dashboard
+    ports:
+      - "8000:8000"    # Supervision epochs : http://localhost:8000/ui
+    volumes:
+      - ./runs:/app/runs:ro

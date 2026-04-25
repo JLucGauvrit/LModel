@@ -1,0 +1,5 @@
+numpy
+pdoc
+tensorboard
+gymnasium
+minigrid
