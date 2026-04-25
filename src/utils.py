@@ -14,10 +14,10 @@ import numpy as np
 import torch
 
 # Constantes d'architecture partagées entre tous les scripts
-LATENT_DIM: int = 32
-HIDDEN_DIM: int = 256
+LATENT_DIM: int = 256
+HIDDEN_DIM: int = 1024
 ACTION_DIM: int = 7
-NUM_GAUSSIANS: int = 5
+NUM_GAUSSIANS: int = 8
 
 # MiniGrid encode (object_id, color_id, state_id) ∈ [0, 10]
 _OBS_NORM: float = 10.0

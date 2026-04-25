@@ -39,15 +39,18 @@ class MDNRNN(nn.Module):
         # Taille : num_gaussians * (1 + latent_dim + latent_dim)
         self.mdn_head = nn.Linear(hidden_dim, num_gaussians * (1 + 2 * latent_dim))
 
+        # Prédiction scalaire de la récompense r_t
+        self.reward_head = nn.Linear(hidden_dim, 1)
+
     def forward(
         self,
         z: torch.Tensor,
         action: torch.Tensor,
         h: torch.Tensor,
         c: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Un pas de temps : met à jour l'état caché et prédit la distribution de z_{t+1}.
+        Un pas de temps : met à jour l'état caché et prédit la distribution de z_{t+1} et r_t.
 
         :param z: Vecteur latent courant, shape (B, latent_dim).
         :type z: torch.Tensor
@@ -57,13 +60,14 @@ class MDNRNN(nn.Module):
         :type h: torch.Tensor
         :param c: État cellule LSTM précédent, shape (B, hidden_dim).
         :type c: torch.Tensor
-        :returns: Tuple (pi, mu, sigma, h_new, c_new).
+        :returns: Tuple (pi, mu, sigma, reward, h_new, c_new).
 
                   - pi : logits de mélange (B, num_gaussians)
                   - mu : moyennes (B, num_gaussians, latent_dim)
                   - sigma : écarts-types > 0 (B, num_gaussians, latent_dim)
+                  - reward : récompense prédite (B, 1)
                   - h_new, c_new : nouvel état caché LSTM
-        :rtype: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+        :rtype: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
         """
         a_onehot = torch.zeros(z.size(0), self.action_dim, device=z.device)
         a_onehot.scatter_(1, action.view(-1, 1).long(), 1.0)
@@ -78,7 +82,9 @@ class MDNRNN(nn.Module):
         log_sigma = out[:, K * (1 + D) :].view(-1, K, D)
         sigma     = torch.exp(log_sigma).clamp(min=1e-4)
 
-        return pi, mu, sigma, h_new, c_new
+        reward = self.reward_head(h_new)  # (B, 1)
+
+        return pi, mu, sigma, reward, h_new, c_new
 
     def init_hidden(
         self, batch_size: int, device: torch.device
@@ -97,6 +103,33 @@ class MDNRNN(nn.Module):
             torch.zeros(batch_size, self.hidden_dim, device=device),
             torch.zeros(batch_size, self.hidden_dim, device=device),
         )
+
+    @staticmethod
+    def sample_latent(
+        pi: torch.Tensor,
+        mu: torch.Tensor,
+        sigma: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Échantillonne z_{t+1} depuis la distribution de mélange de gaussiennes.
+
+        Sélectionne une composante k ~ Categorical(π), puis z ~ N(μ_k, σ_k).
+
+        :param pi: Logits de mélange, shape (B, num_gaussians).
+        :type pi: torch.Tensor
+        :param mu: Moyennes, shape (B, num_gaussians, latent_dim).
+        :type mu: torch.Tensor
+        :param sigma: Écarts-types, shape (B, num_gaussians, latent_dim).
+        :type sigma: torch.Tensor
+        :returns: z_next échantillonné, shape (B, latent_dim).
+        :rtype: torch.Tensor
+        """
+        mix_idx = torch.distributions.Categorical(logits=pi).sample()  # (B,)
+        B, _, D = mu.shape
+        idx = mix_idx.view(B, 1, 1).expand(B, 1, D)
+        sel_mu    = mu.gather(1, idx).squeeze(1)     # (B, D)
+        sel_sigma = sigma.gather(1, idx).squeeze(1)  # (B, D)
+        return sel_mu + torch.randn_like(sel_sigma) * sel_sigma
 
     @staticmethod
     def mdn_loss(

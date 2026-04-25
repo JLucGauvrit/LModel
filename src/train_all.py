@@ -19,11 +19,14 @@ import os
 import runpy
 import sys
 
+import numpy as np
+
 # Ajoute src/ au path pour que les imports inter-scripts fonctionnent
 sys.path.insert(0, os.path.dirname(__file__))
 
-DATA_DIR       = "data"
-CHECKPOINT_DIR = "checkpoints"
+DATA_DIR            = "data"
+CHECKPOINT_DIR      = "checkpoints"
+MIN_TRANSITIONS     = 45_000  # 90 % de TARGET_TRANSITIONS (50 000)
 
 
 def _banner(title: str) -> None:
@@ -34,25 +37,41 @@ def _banner(title: str) -> None:
 
 def _has_data() -> bool:
     """
-    Vérifie si des données collectées sont déjà présentes.
+    Vérifie si suffisamment de données sont présentes (≥ MIN_TRANSITIONS).
 
-    :returns: ``True`` si au moins un fichier .npz existe dans ``data/``.
+    :returns: ``True`` si le total de transitions dépasse MIN_TRANSITIONS.
     :rtype: bool
     """
-    return bool(glob.glob(os.path.join(DATA_DIR, "episode_*.npz")))
+    files = glob.glob(os.path.join(DATA_DIR, "episode_*.npz"))
+    if not files:
+        return False
+    total = sum(int(np.load(f)["actions"].shape[0]) for f in files)
+    if total < MIN_TRANSITIONS:
+        print(f"  → Données insuffisantes ({total} < {MIN_TRANSITIONS}) — recollecte.")
+        return False
+    return True
 
 
 def _has_world_model() -> bool:
     """
-    Vérifie si les checkpoints du World Model sont présents.
+    Vérifie si les checkpoints du World Model sont présents ET à jour.
 
-    :returns: ``True`` si vae.pt et mdn_rnn.pt existent dans ``checkpoints/``.
+    Le MDN-RNN doit contenir ``reward_head.weight`` (ajouté pour les dream
+    rollouts). Si la clé est absente, le checkpoint est considéré obsolète
+    et l'étape 2 est relancée pour ajouter la prédiction de récompense.
+
+    :returns: ``True`` si vae.pt et mdn_rnn.pt existent et sont à jour.
     :rtype: bool
     """
-    return all(
-        os.path.exists(os.path.join(CHECKPOINT_DIR, name))
-        for name in ("vae.pt", "mdn_rnn.pt")
-    )
+    paths = {name: os.path.join(CHECKPOINT_DIR, name) for name in ("vae.pt", "mdn_rnn.pt")}
+    if not all(os.path.exists(p) for p in paths.values()):
+        return False
+    import torch
+    ckpt = torch.load(paths["mdn_rnn.pt"], map_location="cpu", weights_only=True)
+    if "reward_head.weight" not in ckpt:
+        print("  → MDN-RNN sans reward_head détecté — réentraînement de l'étape 2.")
+        return False
+    return True
 
 
 def _run(script_name: str) -> None:
@@ -71,7 +90,7 @@ if __name__ == "__main__":
     if _has_data():
         print(f"→ Données existantes dans {DATA_DIR}/ — collecte ignorée.", flush=True)
     else:
-        _banner("ÉTAPE 1 — Collecte de données (10 000 transitions)")
+        _banner("ÉTAPE 1 — Collecte de données (50 000 transitions)")
         _run("1_collect_data.py")
 
     # --- Étape 2 ---

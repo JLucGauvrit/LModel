@@ -20,6 +20,7 @@ import time
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
@@ -31,14 +32,14 @@ CHECKPOINT_DIR = "checkpoints"
 RUNS_DIR = "runs/world_model"
 
 # --- Hyperparamètres ---
-VAE_EPOCHS = 20
-VAE_BATCH = 64
+VAE_EPOCHS = 40
+VAE_BATCH = 128
 VAE_LR = 1e-3
 
-MDNRNN_EPOCHS = 20
-MDNRNN_BATCH = 32
+MDNRNN_EPOCHS = 40
+MDNRNN_BATCH = 64
 MDNRNN_LR = 1e-3
-SEQ_LEN = 32
+SEQ_LEN = 64
 
 
 class TransitionDataset(Dataset):
@@ -91,19 +92,22 @@ class EpisodeDataset(Dataset):
             obs = d["obs"]
             next_obs = d["next_obs"]
             actions = d["actions"].astype(np.int64)
+            rewards = d["rewards"].astype(np.float32)
             T = len(actions)
             for start in range(0, T - seq_len + 1, seq_len):
                 self.sequences.append((
                     obs[start : start + seq_len],
                     next_obs[start : start + seq_len],
                     actions[start : start + seq_len],
+                    rewards[start : start + seq_len],
                 ))
 
     def __len__(self) -> int:
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> tuple:
-        return self.sequences[idx]
+        obs, next_obs, actions, rewards = self.sequences[idx]
+        return obs, next_obs, actions, rewards
 
 
 def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
@@ -222,7 +226,7 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
         mdn_rnn.train()
         total_loss = 0.0
 
-        for obs_seq, next_obs_seq, action_seq in loader:
+        for obs_seq, next_obs_seq, action_seq, reward_seq in loader:
             B, T = obs_seq.shape[:2]
 
             with torch.no_grad():
@@ -233,16 +237,19 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
                     obs_array_to_tensor(next_obs_seq.numpy().reshape(B * T, 7, 7, 3), device)
                 )
 
-            z      = z_flat.view(B, T, LATENT_DIM)
-            z_next = z_next_flat.view(B, T, LATENT_DIM)
+            z       = z_flat.view(B, T, LATENT_DIM)
+            z_next  = z_next_flat.view(B, T, LATENT_DIM)
             actions = action_seq.to(device)
+            rewards = reward_seq.to(device)    # (B, T)
 
             h, c = mdn_rnn.init_hidden(B, device)
             seq_loss = torch.tensor(0.0, device=device)
 
             for t in range(T):
-                pi, mu, sigma, h, c = mdn_rnn(z[:, t], actions[:, t], h, c)
-                seq_loss = seq_loss + MDNRNN.mdn_loss(pi, mu, sigma, z_next[:, t])
+                pi, mu, sigma, r_pred, h, c = mdn_rnn(z[:, t], actions[:, t], h, c)
+                nll = MDNRNN.mdn_loss(pi, mu, sigma, z_next[:, t])
+                r_loss = F.mse_loss(r_pred.squeeze(-1), rewards[:, t])
+                seq_loss = seq_loss + nll + r_loss
 
             loss = seq_loss / T
             optimizer.zero_grad()

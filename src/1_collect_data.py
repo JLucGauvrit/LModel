@@ -24,7 +24,7 @@ import numpy as np
 from utils import write_status
 
 DATA_DIR = "data"
-TARGET_TRANSITIONS = 10_000
+TARGET_TRANSITIONS = 50_000
 MAX_STEPS_PER_EPISODE = 500
 
 
