@@ -22,6 +22,10 @@ L'environnement MiniGrid est instancié localement dans le conteneur trainer pou
 
 L'API n'est plus utilisée pour l'entraînement ; les scripts instancient l'environnement localement.
 
+### Pipeline d'entraînement
+
+![Entraînement UML](images/EntrainementUML.png)
+
 ## Structure des fichiers
 
 ```
