@@ -35,8 +35,8 @@ MAX_STEPS_PER_EPISODE: int = int(os.getenv("MAX_STEPS_PER_EPISODE", 500))
 TARGET_TRANSITIONS:    int = int(os.getenv("TARGET_TRANSITIONS", 200_000))
 
 _default_envs = (
-    "MiniGrid-Empty-8x8-v0,"
-    "MiniGrid-FourRooms-v0,"
+    "MiniGrid-Empty-5x5-v0,"
+    "MiniGrid-Empty-6x6-v0,"
     "MiniGrid-DoorKey-5x5-v0,"
     "MiniGrid-SimpleCrossingS9N1-v0"
 )
