@@ -2,22 +2,26 @@
 Utilitaires partagés entre les scripts d'entraînement.
 
 Centralise la normalisation des observations et les constantes d'architecture.
+Toutes les constantes sont surchargeables via variables d'environnement
+(fichier .env à la racine du projet).
 """
 
+import datetime
 import json
 import os
-import datetime
-import sys
-from typing import Any
 
 import numpy as np
 import torch
+from dotenv import load_dotenv
 
-# Constantes d'architecture partagées entre tous les scripts
-LATENT_DIM: int = 256
-HIDDEN_DIM: int = 1024
-ACTION_DIM: int = 7
-NUM_GAUSSIANS: int = 8
+load_dotenv()
+
+# ── Constantes d'architecture ─────────────────────────────────────────────────
+# Surchargeables via .env : LATENT_DIM, HIDDEN_DIM, ACTION_DIM, NUM_GAUSSIANS
+LATENT_DIM:    int = int(os.getenv("LATENT_DIM",    256))
+HIDDEN_DIM:    int = int(os.getenv("HIDDEN_DIM",   1024))
+ACTION_DIM:    int = int(os.getenv("ACTION_DIM",      7))
+NUM_GAUSSIANS: int = int(os.getenv("NUM_GAUSSIANS",   8))
 
 # MiniGrid encode (object_id, color_id, state_id) ∈ [0, 10]
 _OBS_NORM: float = 10.0
@@ -62,6 +66,8 @@ def obs_array_to_tensor(
 
 
 _STATUS_PATH = os.path.join("runs", "status.json")
+_history: list[dict] = []
+_current_label: str = ""
 
 
 def write_status(
@@ -70,12 +76,16 @@ def write_status(
     current: int,
     total: int,
     metrics: dict | None = None,
+    eta: str | None = None,
 ) -> None:
     """
     Écrit l'état courant de l'entraînement dans runs/status.json.
 
-    Utilise une écriture atomique (tmp + rename) pour éviter que le dashboard
-    lise un fichier partiel.
+    Accumule un historique des métriques par epoch dans la variable globale
+    ``_history``. L'historique est réinitialisé automatiquement quand ``label``
+    change (nouvelle phase d'entraînement). Utilise une écriture atomique
+    (tmp PID-unique + rename) pour éviter les race conditions et les lectures
+    partielles par le dashboard.
 
     :param step: Numéro de l'étape courante (1, 2 ou 3).
     :type step: int
@@ -87,8 +97,20 @@ def write_status(
     :type total: int
     :param metrics: Métriques à afficher {nom: valeur}.
     :type metrics: dict | None
+    :param eta: Temps restant estimé, format "HH:MM:SS".
+    :type eta: str | None
     :returns: None
     """
+    global _history, _current_label
+
+    if label != _current_label:
+        _history = []
+        _current_label = label
+
+    point: dict = {"x": current}
+    point.update(metrics or {})
+    _history.append(point)
+
     os.makedirs("runs", exist_ok=True)
     payload = {
         "step": step,
@@ -96,9 +118,11 @@ def write_status(
         "current": current,
         "total": total,
         "metrics": metrics or {},
+        "eta": eta or "",
         "updated": datetime.datetime.now().strftime("%H:%M:%S"),
+        "history": _history,
     }
-    tmp = _STATUS_PATH + ".tmp"
+    tmp = f"{_STATUS_PATH}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump(payload, f)
     os.replace(tmp, _STATUS_PATH)

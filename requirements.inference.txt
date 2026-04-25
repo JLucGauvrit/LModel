@@ -1,0 +1,9 @@
+numpy
+gymnasium
+minigrid
+matplotlib
+pillow
+fastapi
+uvicorn
+pydantic
+python-dotenv

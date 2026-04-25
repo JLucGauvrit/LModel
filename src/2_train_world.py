@@ -27,19 +27,19 @@ from torch.utils.tensorboard import SummaryWriter
 from models import VAE, MDNRNN
 from utils import LATENT_DIM, HIDDEN_DIM, ACTION_DIM, NUM_GAUSSIANS, obs_array_to_tensor, write_status
 
-DATA_DIR = "data"
+DATA_DIR      = "data"
 CHECKPOINT_DIR = "checkpoints"
-RUNS_DIR = "runs/world_model"
+RUNS_DIR       = "runs/world_model"
 
-# --- Hyperparamètres ---
-VAE_EPOCHS = 40
-VAE_BATCH = 128
-VAE_LR = 1e-3
+# ── Hyperparamètres — surchargeables via .env ─────────────────────────────────
+VAE_EPOCHS:    int   = int(os.getenv("VAE_EPOCHS", 80))
+VAE_BATCH:     int   = int(os.getenv("VAE_BATCH",  512))
+VAE_LR:        float = float(os.getenv("VAE_LR",   1e-3))
 
-MDNRNN_EPOCHS = 40
-MDNRNN_BATCH = 64
-MDNRNN_LR = 1e-3
-SEQ_LEN = 64
+MDNRNN_EPOCHS: int   = int(os.getenv("MDNRNN_EPOCHS", 80))
+MDNRNN_BATCH:  int   = int(os.getenv("MDNRNN_BATCH",  256))
+MDNRNN_LR:     float = float(os.getenv("MDNRNN_LR",   1e-3))
+SEQ_LEN:       int   = int(os.getenv("SEQ_LEN",       128))
 
 
 class TransitionDataset(Dataset):
@@ -134,7 +134,7 @@ def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
 
     dataset = TransitionDataset(DATA_DIR)
     loader = DataLoader(dataset, batch_size=VAE_BATCH, shuffle=True,
-                        num_workers=2, pin_memory=device.type == "cuda")
+                        num_workers=4, pin_memory=device.type == "cuda")
 
     vae = VAE(latent_dim=LATENT_DIM).to(device)
     optimizer = torch.optim.Adam(vae.parameters(), lr=VAE_LR)
@@ -165,13 +165,15 @@ def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
         writer.add_scalar("VAE/loss_total",          total_loss  / n, epoch)
         writer.add_scalar("VAE/loss_reconstruction", total_recon / n, epoch)
         writer.add_scalar("VAE/loss_kl",             total_kl    / n, epoch)
-        write_status(2, "World Model — VAE", epoch + 1, VAE_EPOCHS,
-                     {"loss": round(total_loss / n, 4)})
-
         elapsed   = time.time() - t_start
         avg_epoch = elapsed / (epoch + 1)
         remaining = avg_epoch * (VAE_EPOCHS - epoch - 1)
         eta       = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
+        write_status(2, "World Model — VAE", epoch + 1, VAE_EPOCHS,
+                     {"loss": round(total_loss / n, 4),
+                      "recon": round(total_recon / n, 4),
+                      "kl": round(total_kl / n, 4)},
+                     eta=eta)
         print(f"[VAE] Epoch {epoch + 1:3d}/{VAE_EPOCHS} | "
               f"loss={total_loss/n:.4f} | recon={total_recon/n:.4f} | kl={total_kl/n:.4f} | "
               f"{eta} restant")
@@ -208,7 +210,7 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
     """
     print("\n=== Phase 2 : Entraînement du MDN-RNN ===")
     dataset = EpisodeDataset(DATA_DIR, seq_len=SEQ_LEN)
-    loader = DataLoader(dataset, batch_size=MDNRNN_BATCH, shuffle=True, num_workers=2)
+    loader = DataLoader(dataset, batch_size=MDNRNN_BATCH, shuffle=True, num_workers=4)
 
     for p in vae.parameters():
         p.requires_grad_(False)
@@ -265,7 +267,7 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
         eta      = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
         writer.add_scalar("MDNRNN/loss_nll", avg, epoch)
         write_status(2, "World Model — MDN-RNN", epoch + 1, MDNRNN_EPOCHS,
-                     {"nll": round(avg, 4)})
+                     {"nll": round(avg, 4)}, eta=eta)
         print(f"[MDN-RNN] Epoch {epoch + 1:3d}/{MDNRNN_EPOCHS} | "
               f"nll={avg:.4f} | {eta} restant")
 

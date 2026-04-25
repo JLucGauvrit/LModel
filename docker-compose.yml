@@ -6,6 +6,7 @@ services:
       dockerfile: Dockerfile.trainer
     container_name: minigrid_trainer
     command: python src/train_all.py
+    env_file: .env
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
@@ -24,6 +25,9 @@ services:
           target: /app/src
         - path: ./requirements.trainer.txt
           action: rebuild
+        - path: .env
+          action: sync+restart
+          target: /app/.env
 
   tensorboard:
     build:
@@ -36,6 +40,40 @@ services:
     volumes:
       - ./runs:/app/runs
 
+  inference:
+    build:
+      context: .
+      dockerfile: Dockerfile.inference
+    container_name: minigrid_inference
+    ports:
+      - "8080:8080"    # UI inférence : http://localhost:8080
+    env_file: .env
+    environment:
+      CUDA_VISIBLE_DEVICES: "1"   # RTX 2060 SUPER uniquement (override .env)
+    volumes:
+      - ./checkpoints:/app/checkpoints:ro   # modèles en lecture seule
+      - ./data:/app/data                    # GIFs et reconstruction VAE en sortie
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    develop:
+      watch:
+        - path: ./src
+          action: sync
+          target: /app/src
+        - path: ./frontend/inference_ui.py
+          action: sync+restart
+          target: /app/frontend/inference_ui.py
+        - path: ./requirements.inference.txt
+          action: rebuild
+        - path: .env
+          action: sync+restart
+          target: /app/.env
+
   dashboard:
     build:
       context: .
@@ -45,3 +83,8 @@ services:
       - "8000:8000"    # Supervision epochs : http://localhost:8000/ui
     volumes:
       - ./runs:/app/runs:ro
+    develop:
+      watch:
+        - path: ./frontend/server.py
+          action: sync+restart
+          target: /app/frontend/server.py

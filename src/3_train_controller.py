@@ -42,19 +42,20 @@ from utils import (
     write_status,
 )
 
-CHECKPOINT_DIR  = "checkpoints"
-DATA_DIR        = "data"
-RUNS_DIR        = "runs/controller"
+CHECKPOINT_DIR = "checkpoints"
+DATA_DIR       = "data"
+RUNS_DIR       = "runs/controller"
 
-NUM_ENVS        = 512   # rêves en parallèle par update
-NUM_UPDATES     = 2000  # nombre de mises à jour du gradient
-DREAM_STEPS     = 64    # pas de temps par rêve
-GAMMA           = 0.99
-LR              = 3e-4
-ENTROPY_COEFF   = 0.01
-MAX_GRAD_NORM   = 1.0
-SAVE_EVERY      = 100
-REWARD_WINDOW   = 20
+# ── Hyperparamètres — surchargeables via .env ─────────────────────────────────
+NUM_ENVS:      int   = int(os.getenv("CTRL_NUM_ENVS",      2048))
+NUM_UPDATES:   int   = int(os.getenv("CTRL_NUM_UPDATES",   8000))
+DREAM_STEPS:   int   = int(os.getenv("CTRL_DREAM_STEPS",    128))
+GAMMA:         float = float(os.getenv("CTRL_GAMMA",        0.99))
+LR:            float = float(os.getenv("CTRL_LR",          3e-4))
+ENTROPY_COEFF: float = float(os.getenv("CTRL_ENTROPY_COEFF", 0.01))
+MAX_GRAD_NORM: float = float(os.getenv("CTRL_MAX_GRAD_NORM",  1.0))
+SAVE_EVERY:    int   = int(os.getenv("CTRL_SAVE_EVERY",     100))
+REWARD_WINDOW: int   = int(os.getenv("CTRL_REWARD_WINDOW",   20))
 
 
 def load_world_model(device: torch.device) -> tuple[VAE, MDNRNN]:
@@ -278,15 +279,16 @@ def train_controller() -> None:
         writer.add_scalar("Controller/reward_avg",    avg_reward,  total_episodes)
         writer.add_scalar("Controller/episode_steps", DREAM_STEPS, total_episodes)
         writer.add_scalar("Controller/policy_loss",   loss.item(), total_episodes)
-        write_status(3, "Contrôleur — REINFORCE (dream)", update, NUM_UPDATES,
-                     {"reward_avg": round(avg_reward, 3)})
-
         elapsed   = time.time() - t_start
         avg_up    = elapsed / update
         remaining = avg_up * (NUM_UPDATES - update)
         eta = (f"{int(remaining // 3600):02d}:"
                f"{int((remaining % 3600) // 60):02d}:"
                f"{int(remaining % 60):02d}")
+        write_status(3, "Contrôleur — REINFORCE (dream)", update, NUM_UPDATES,
+                     {"reward_avg": round(avg_reward, 3),
+                      "policy_loss": round(loss.item(), 4)},
+                     eta=eta)
         print(f"[Ctrl] Update {update:4d}/{NUM_UPDATES} | "
               f"Ep {total_episodes:6d} | "
               f"Reward {avg_ep_reward:6.4f} | "
