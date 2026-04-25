@@ -63,6 +63,9 @@ def obs_array_to_tensor(
 
 _STATUS_PATH = os.path.join("runs", "status.json")
 
+_history: list[dict] = []
+_current_label: str = ""
+
 
 def write_status(
     step: int,
@@ -70,12 +73,15 @@ def write_status(
     current: int,
     total: int,
     metrics: dict | None = None,
+    eta: str | None = None,
 ) -> None:
     """
     Écrit l'état courant de l'entraînement dans runs/status.json.
 
-    Utilise une écriture atomique (tmp + rename) pour éviter que le dashboard
-    lise un fichier partiel.
+    Accumule un historique des métriques par epoch dans la variable globale
+    ``_history``. L'historique est réinitialisé automatiquement quand ``label``
+    change (nouvelle phase d'entraînement). Utilise une écriture atomique
+    (tmp + rename) pour éviter que le dashboard lise un fichier partiel.
 
     :param step: Numéro de l'étape courante (1, 2 ou 3).
     :type step: int
@@ -87,8 +93,20 @@ def write_status(
     :type total: int
     :param metrics: Métriques à afficher {nom: valeur}.
     :type metrics: dict | None
+    :param eta: Temps restant estimé, format "HH:MM:SS".
+    :type eta: str | None
     :returns: None
     """
+    global _history, _current_label
+
+    if label != _current_label:
+        _history = []
+        _current_label = label
+
+    point: dict = {"x": current}
+    point.update(metrics or {})
+    _history.append(point)
+
     os.makedirs("runs", exist_ok=True)
     payload = {
         "step": step,
@@ -96,7 +114,9 @@ def write_status(
         "current": current,
         "total": total,
         "metrics": metrics or {},
+        "eta": eta or "",
         "updated": datetime.datetime.now().strftime("%H:%M:%S"),
+        "history": _history,
     }
     tmp = _STATUS_PATH + ".tmp"
     with open(tmp, "w") as f:

@@ -278,8 +278,6 @@ def train_controller() -> None:
         writer.add_scalar("Controller/reward_avg",    avg_reward,  total_episodes)
         writer.add_scalar("Controller/episode_steps", DREAM_STEPS, total_episodes)
         writer.add_scalar("Controller/policy_loss",   loss.item(), total_episodes)
-        write_status(3, "Contrôleur — REINFORCE (dream)", update, NUM_UPDATES,
-                     {"reward_avg": round(avg_reward, 3)})
 
         elapsed   = time.time() - t_start
         avg_up    = elapsed / update
@@ -287,6 +285,10 @@ def train_controller() -> None:
         eta = (f"{int(remaining // 3600):02d}:"
                f"{int((remaining % 3600) // 60):02d}:"
                f"{int(remaining % 60):02d}")
+        write_status(3, "Contrôleur — REINFORCE (dream)", update, NUM_UPDATES,
+                     {"reward_avg": round(avg_reward, 3),
+                      "policy_loss": round(loss.item(), 4)},
+                     eta=eta)
         print(f"[Ctrl] Update {update:4d}/{NUM_UPDATES} | "
               f"Ep {total_episodes:6d} | "
               f"Reward {avg_ep_reward:6.4f} | "

@@ -165,13 +165,16 @@ def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
         writer.add_scalar("VAE/loss_total",          total_loss  / n, epoch)
         writer.add_scalar("VAE/loss_reconstruction", total_recon / n, epoch)
         writer.add_scalar("VAE/loss_kl",             total_kl    / n, epoch)
-        write_status(2, "World Model — VAE", epoch + 1, VAE_EPOCHS,
-                     {"loss": round(total_loss / n, 4)})
 
         elapsed   = time.time() - t_start
         avg_epoch = elapsed / (epoch + 1)
         remaining = avg_epoch * (VAE_EPOCHS - epoch - 1)
         eta       = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
+        write_status(2, "World Model — VAE", epoch + 1, VAE_EPOCHS,
+                     {"loss": round(total_loss / n, 4),
+                      "recon": round(total_recon / n, 4),
+                      "kl": round(total_kl / n, 4)},
+                     eta=eta)
         print(f"[VAE] Epoch {epoch + 1:3d}/{VAE_EPOCHS} | "
               f"loss={total_loss/n:.4f} | recon={total_recon/n:.4f} | kl={total_kl/n:.4f} | "
               f"{eta} restant")
@@ -265,7 +268,8 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
         eta      = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
         writer.add_scalar("MDNRNN/loss_nll", avg, epoch)
         write_status(2, "World Model — MDN-RNN", epoch + 1, MDNRNN_EPOCHS,
-                     {"nll": round(avg, 4)})
+                     {"nll": round(avg, 4)},
+                     eta=eta)
         print(f"[MDN-RNN] Epoch {epoch + 1:3d}/{MDNRNN_EPOCHS} | "
               f"nll={avg:.4f} | {eta} restant")
 
