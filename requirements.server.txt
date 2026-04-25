@@ -1,7 +1,0 @@
-gymnasium
-minigrid
-fastapi
-uvicorn[standard]
-pydantic
-numpy
-pillow

@@ -1,29 +1,11 @@
 services:
 
-  env_server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    container_name: minigrid_server
-    command: python src/server.py
-    ports:
-      - "8000:8000"    # UI live : http://localhost:8000/ui
-    develop:
-      watch:
-        - path: ./src/server.py
-          action: sync+restart
-          target: /app/src/server.py
-        - path: ./requirements.server.txt
-          action: rebuild
-
   trainer:
     build:
       context: .
       dockerfile: Dockerfile.trainer
     container_name: minigrid_trainer
-    command: sleep infinity
-    depends_on:
-      - env_server
+    command: python src/train_all.py
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
@@ -48,7 +30,7 @@ services:
       context: .
       dockerfile: Dockerfile.trainer
     container_name: minigrid_tensorboard
-    command: tensorboard --logdir /app/runs --host 0.0.0.0 --port 6006
+    command: tensorboard --logdir /app/runs --host 0.0.0.0 --port 6006 --load_fast=false
     ports:
       - "6006:6006"    # Dashboard métriques : http://localhost:6006
     volumes:

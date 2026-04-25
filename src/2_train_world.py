@@ -16,6 +16,7 @@ Usage :
 
 import glob
 import os
+import time
 
 import numpy as np
 import torch
@@ -134,7 +135,9 @@ def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
     vae = VAE(latent_dim=LATENT_DIM).to(device)
     optimizer = torch.optim.Adam(vae.parameters(), lr=VAE_LR)
 
+    t_start = time.time()
     for epoch in range(VAE_EPOCHS):
+        t_epoch = time.time()
         vae.train()
         total_loss = total_recon = total_kl = 0.0
 
@@ -159,8 +162,13 @@ def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
         writer.add_scalar("VAE/loss_reconstruction", total_recon / n, epoch)
         writer.add_scalar("VAE/loss_kl",             total_kl    / n, epoch)
 
-        print(f"  Epoch {epoch + 1:02d}/{VAE_EPOCHS} | "
-              f"Total {total_loss/n:.4f} | Recon {total_recon/n:.4f} | KL {total_kl/n:.4f}")
+        elapsed   = time.time() - t_start
+        avg_epoch = elapsed / (epoch + 1)
+        remaining = avg_epoch * (VAE_EPOCHS - epoch - 1)
+        eta       = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
+        print(f"[VAE] Epoch {epoch + 1:3d}/{VAE_EPOCHS} | "
+              f"loss={total_loss/n:.4f} | recon={total_recon/n:.4f} | kl={total_kl/n:.4f} | "
+              f"{eta} restant")
 
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     torch.save(vae.state_dict(), os.path.join(CHECKPOINT_DIR, "vae.pt"))
@@ -207,6 +215,7 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
     ).to(device)
     optimizer = torch.optim.Adam(mdn_rnn.parameters(), lr=MDNRNN_LR)
 
+    t_start = time.time()
     for epoch in range(MDNRNN_EPOCHS):
         mdn_rnn.train()
         total_loss = 0.0
@@ -240,9 +249,14 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
             optimizer.step()
             total_loss += loss.item()
 
-        avg = total_loss / len(loader)
+        avg      = total_loss / len(loader)
+        elapsed  = time.time() - t_start
+        avg_ep   = elapsed / (epoch + 1)
+        remaining = avg_ep * (MDNRNN_EPOCHS - epoch - 1)
+        eta      = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
         writer.add_scalar("MDNRNN/loss_nll", avg, epoch)
-        print(f"  Epoch {epoch + 1:02d}/{MDNRNN_EPOCHS} | NLL : {avg:.4f}")
+        print(f"[MDN-RNN] Epoch {epoch + 1:3d}/{MDNRNN_EPOCHS} | "
+              f"nll={avg:.4f} | {eta} restant")
 
     torch.save(mdn_rnn.state_dict(), os.path.join(CHECKPOINT_DIR, "mdn_rnn.pt"))
     print(f"→ MDN-RNN sauvegardé dans {CHECKPOINT_DIR}/mdn_rnn.pt")
@@ -251,8 +265,9 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device : {device}")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    gpu_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
+    print(f"Device : {device} ({gpu_name})")
 
     if not glob.glob(os.path.join(DATA_DIR, "*.npz")):
         print(f"Erreur : aucun fichier .npz dans '{DATA_DIR}/'. Lancez 1_collect_data.py d'abord.")

@@ -1,8 +1,8 @@
 """
 Étape 1 — Collecte de données par jeu aléatoire.
 
-Joue TARGET_TRANSITIONS pas dans l'environnement avec des actions uniformément
-aléatoires et sauvegarde chaque épisode dans data/episode_XXXXXX.npz.
+Joue TARGET_TRANSITIONS pas dans l'environnement MiniGrid instancié localement
+avec des actions uniformément aléatoires et sauvegarde chaque épisode dans data/episode_XXXXXX.npz.
 
 Chaque fichier contient les arrays :
   obs      (T, 7, 7, 3) uint8  — observation à l'instant t
@@ -16,14 +16,11 @@ Usage :
 """
 
 import os
-import random
 
+import gymnasium as gym
+import minigrid  # noqa: F401 — enregistre les environnements MiniGrid
 import numpy as np
-import requests
 
-from utils import request_with_retry
-
-SERVER_URL = "http://env_server:8000"
 DATA_DIR = "data"
 TARGET_TRANSITIONS = 10_000
 MAX_STEPS_PER_EPISODE = 500
@@ -39,7 +36,7 @@ def collect_data() -> None:
     :returns: None
     """
     os.makedirs(DATA_DIR, exist_ok=True)
-    session = requests.Session()
+    env = gym.make("MiniGrid-Empty-8x8-v0")
 
     total = 0
     episode_idx = 0
@@ -47,28 +44,27 @@ def collect_data() -> None:
     print(f"Collecte de {TARGET_TRANSITIONS} transitions → {DATA_DIR}/")
 
     while total < TARGET_TRANSITIONS:
-        res = request_with_retry(session, "GET", f"{SERVER_URL}/reset")
-        obs = np.array(res.json()["obs"], dtype=np.uint8)
+        gym_obs, _ = env.reset()
+        obs = gym_obs["image"]  # (7, 7, 3) uint8
 
         obs_list, next_obs_list, action_list, reward_list, done_list = [], [], [], [], []
 
         for _ in range(MAX_STEPS_PER_EPISODE):
-            action = random.randint(0, 6)
-            res = request_with_retry(session, "POST", f"{SERVER_URL}/step",
-                                     json={"action": action})
-            data = res.json()
+            action = env.action_space.sample()
+            gym_obs, reward, terminated, truncated, _ = env.step(action)
+            next_obs = gym_obs["image"]
+            done = terminated or truncated
 
-            next_obs = np.array(data["obs"], dtype=np.uint8)
             obs_list.append(obs)
             next_obs_list.append(next_obs)
             action_list.append(action)
-            reward_list.append(float(data["reward"]))
-            done_list.append(bool(data["done"]))
+            reward_list.append(float(reward))
+            done_list.append(done)
 
             obs = next_obs
             total += 1
 
-            if data["done"] or total >= TARGET_TRANSITIONS:
+            if done or total >= TARGET_TRANSITIONS:
                 break
 
         np.savez_compressed(
@@ -84,6 +80,7 @@ def collect_data() -> None:
         print(f"  Épisode {episode_idx:4d} | {len(action_list):3d} steps | "
               f"Total : {total}/{TARGET_TRANSITIONS}")
 
+    env.close()
     print(f"\nCollecte terminée — {total} transitions dans {episode_idx} fichiers.")
 
 

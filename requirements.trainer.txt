@@ -1,4 +1,5 @@
 numpy
-requests
 pdoc
 tensorboard
+gymnasium
+minigrid

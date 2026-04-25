@@ -4,10 +4,10 @@
 Le VAE et le MDN-RNN sont chargés depuis les checkpoints et gelés.
 Seul le Contrôleur (une couche linéaire) est optimisé par policy gradient.
 
-L'agent agit directement dans l'environnement réel via l'API env_server :
+L'agent agit directement dans l'environnement MiniGrid local :
   1. V encode l'observation → z
   2. C choisit une action stochastique depuis Categorical(logits=C(z, h))
-  3. L'action est envoyée à l'API, la récompense est collectée
+  3. L'action est exécutée dans l'env local, la récompense est collectée
   4. M met à jour l'état caché h (sans gradient, V et M gelés)
   5. Après l'épisode : G_t = Σ γ^k r_{t+k}, loss = -Σ log π(a_t) · G_t
 
@@ -20,19 +20,21 @@ Usage :
 """
 
 import os
+import time
 from collections import deque
 
-import requests
+import gymnasium as gym
+import minigrid  # noqa: F401 — enregistre les environnements MiniGrid
+import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from models import VAE, MDNRNN, Controller
 from utils import (
-    obs_to_tensor, request_with_retry,
+    obs_array_to_tensor,
     LATENT_DIM, HIDDEN_DIM, ACTION_DIM, NUM_GAUSSIANS,
 )
 
-SERVER_URL = "http://env_server:8000"
 CHECKPOINT_DIR = "checkpoints"
 RUNS_DIR = "runs/controller"
 
@@ -105,7 +107,7 @@ def compute_returns(rewards: list[float], gamma: float = GAMMA) -> torch.Tensor:
 
 
 def run_episode(
-    session: requests.Session,
+    env: gym.Env,
     vae: VAE,
     mdn_rnn: MDNRNN,
     controller: Controller,
@@ -114,8 +116,8 @@ def run_episode(
     """
     Joue un épisode complet dans l'environnement et collecte les log-probs et récompenses.
 
-    :param session: Session HTTP réutilisable.
-    :type session: requests.Session
+    :param env: Environnement MiniGrid local.
+    :type env: gym.Env
     :param vae: VAE gelé pour l'encodage des observations.
     :type vae: VAE
     :param mdn_rnn: MDN-RNN gelé pour la mise à jour de l'état caché.
@@ -127,8 +129,8 @@ def run_episode(
     :returns: Tuple (log_probs stacked, rewards list).
     :rtype: tuple[torch.Tensor, list[float]]
     """
-    res = request_with_retry(session, "GET", f"{SERVER_URL}/reset")
-    obs = obs_to_tensor(res.json()["obs"], device)
+    gym_obs, _ = env.reset()
+    obs = obs_array_to_tensor(gym_obs["image"][np.newaxis], device)  # (1, 3, 7, 7)
 
     h, c = mdn_rnn.init_hidden(1, device)
     log_probs: list[torch.Tensor] = []
@@ -144,15 +146,13 @@ def run_episode(
         action = dist.sample()
         log_probs.append(dist.log_prob(action))
 
-        res  = request_with_retry(session, "POST", f"{SERVER_URL}/step",
-                                  json={"action": action.item()})
-        data = res.json()
+        gym_obs, reward, terminated, truncated, _ = env.step(action.item())
+        done = terminated or truncated
 
-        rewards.append(float(data["reward"]))
-        done = data["done"]
+        rewards.append(float(reward))
 
         if not done:
-            obs = obs_to_tensor(data["obs"], device)
+            obs = obs_array_to_tensor(gym_obs["image"][np.newaxis], device)
             with torch.no_grad():
                 _, _, _, h, c = mdn_rnn(z, action, h, c)
 
@@ -173,8 +173,9 @@ def train_controller() -> None:
 
     :returns: None
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device : {device}")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    gpu_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
+    print(f"Device : {device} ({gpu_name})")
 
     vae, mdn_rnn = load_world_model(device)
     controller = Controller(
@@ -182,16 +183,17 @@ def train_controller() -> None:
     ).to(device)
     optimizer = torch.optim.Adam(controller.parameters(), lr=LR)
 
-    session = requests.Session()
-    writer  = SummaryWriter(log_dir=RUNS_DIR)
+    env    = gym.make("MiniGrid-Empty-8x8-v0")
+    writer = SummaryWriter(log_dir=RUNS_DIR)
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
     reward_window: deque[float] = deque(maxlen=REWARD_WINDOW)
     print(f"TensorBoard → {RUNS_DIR}")
     print(f"\nDébut entraînement Contrôleur — {NUM_EPISODES} épisodes...\n")
 
+    t_start = time.time()
     for episode in range(1, NUM_EPISODES + 1):
-        log_probs, rewards = run_episode(session, vae, mdn_rnn, controller, device)
+        log_probs, rewards = run_episode(env, vae, mdn_rnn, controller, device)
         returns = compute_returns(rewards).to(device)
 
         loss = -(log_probs * returns).sum()
@@ -203,17 +205,21 @@ def train_controller() -> None:
         reward_window.append(total_reward)
         avg_reward = sum(reward_window) / len(reward_window)
 
-        # --- TensorBoard ---
-        writer.add_scalar("Controller/reward",        total_reward,      episode)
-        writer.add_scalar("Controller/reward_avg",    avg_reward,        episode)
-        writer.add_scalar("Controller/episode_steps", len(rewards),      episode)
-        writer.add_scalar("Controller/policy_loss",   loss.item(),       episode)
+        writer.add_scalar("Controller/reward",        total_reward, episode)
+        writer.add_scalar("Controller/reward_avg",    avg_reward,   episode)
+        writer.add_scalar("Controller/episode_steps", len(rewards), episode)
+        writer.add_scalar("Controller/policy_loss",   loss.item(),  episode)
 
-        print(f"  Ep {episode:4d}/{NUM_EPISODES} | "
+        elapsed   = time.time() - t_start
+        avg_ep    = elapsed / episode
+        remaining = avg_ep * (NUM_EPISODES - episode)
+        eta       = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
+        print(f"[Ctrl] Ep {episode:4d}/{NUM_EPISODES} | "
               f"Steps {len(rewards):3d} | "
               f"Reward {total_reward:6.3f} | "
               f"Avg({REWARD_WINDOW}) {avg_reward:6.3f} | "
-              f"Loss {loss.item():8.4f}")
+              f"Loss {loss.item():8.4f} | "
+              f"{eta} restant")
 
         if episode % SAVE_EVERY == 0:
             ckpt = os.path.join(CHECKPOINT_DIR, "controller.pt")
@@ -221,6 +227,7 @@ def train_controller() -> None:
             print(f"  → Checkpoint : {ckpt}\n")
 
     torch.save(controller.state_dict(), os.path.join(CHECKPOINT_DIR, "controller.pt"))
+    env.close()
     writer.close()
     print("\nEntraînement du Contrôleur terminé.")
 

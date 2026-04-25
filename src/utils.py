@@ -1,16 +1,13 @@
 """
 Utilitaires partagés entre les scripts d'entraînement.
 
-Centralise la normalisation des observations, les constantes d'architecture
-et la logique de retry HTTP pour la communication avec env_server.
+Centralise la normalisation des observations et les constantes d'architecture.
 """
 
 import sys
-import time
 from typing import Any
 
 import numpy as np
-import requests
 import torch
 
 # Constantes d'architecture partagées entre tous les scripts
@@ -59,47 +56,3 @@ def obs_array_to_tensor(
     arr = obs_array.astype(np.float32) / _OBS_NORM
     arr = arr.transpose(0, 3, 1, 2)  # (B, H, W, C) → (B, C, H, W)
     return torch.tensor(arr, device=device)
-
-
-def request_with_retry(
-    session: requests.Session,
-    method: str,
-    url: str,
-    max_retries: int = 10,
-    initial_delay: float = 1.0,
-    **kwargs: Any,
-) -> requests.Response:
-    """
-    Effectue une requête HTTP avec retry exponentiel en cas d'échec de connexion.
-
-    Utile au démarrage du conteneur ``trainer`` où ``env_server`` peut ne pas
-    être encore prêt à répondre malgré le ``depends_on`` de Docker Compose.
-
-    :param session: Session requests réutilisable (conserve les connexions TCP).
-    :type session: requests.Session
-    :param method: Méthode HTTP (``"GET"``, ``"POST"``).
-    :type method: str
-    :param url: URL complète de l'endpoint cible.
-    :type url: str
-    :param max_retries: Nombre maximum de tentatives avant abandon.
-    :type max_retries: int
-    :param initial_delay: Délai initial en secondes, doublé à chaque tentative (max 30 s).
-    :type initial_delay: float
-    :returns: Réponse HTTP avec statut 2xx.
-    :rtype: requests.Response
-    :raises SystemExit: Si le serveur est inaccessible après toutes les tentatives.
-    """
-    delay = initial_delay
-    for attempt in range(max_retries):
-        try:
-            resp = session.request(method, url, timeout=10, **kwargs)
-            resp.raise_for_status()
-            return resp
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as exc:
-            if attempt < max_retries - 1:
-                print(f"[Retry {attempt + 1}/{max_retries}] {url} — {exc} — attente {delay:.0f}s")
-                time.sleep(delay)
-                delay = min(delay * 2, 30.0)
-            else:
-                print(f"Erreur fatale : {url} inaccessible après {max_retries} tentatives.")
-                sys.exit(1)

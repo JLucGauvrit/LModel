@@ -8,11 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture V-M-C
 
-Two Docker services communicate over a private network via REST:
-
-```
-env_server (FastAPI + MiniGrid) ──REST──► trainer (PyTorch, RTX 2060 SUPER)
-```
+Le conteneur trainer instancie l'environnement MiniGrid localement pour des performances optimales et gère l'entraînement complet.
 
 | Model | Class | File | Role |
 |---|---|---|---|
@@ -24,12 +20,11 @@ env_server (FastAPI + MiniGrid) ──REST──► trainer (PyTorch, RTX 2060 S
 
 ## Docker Setup
 
-Two separate images — do **not** use a single shared image:
+One image for training and monitoring:
 
 | Dockerfile | Service | Key deps |
 |---|---|---|
-| `Dockerfile.server` | `env_server` | gymnasium, minigrid, fastapi, uvicorn, pillow |
-| `Dockerfile.trainer` | `trainer` + `tensorboard` | torch (CUDA 12.4), numpy, tensorboard, pdoc |
+| `Dockerfile.trainer` | `trainer` + `tensorboard` | torch (CUDA 12.4), numpy, tensorboard, pdoc, gymnasium, minigrid |
 
 `Dockerfile.trainer` installs torch in a separate layer before `requirements.trainer.txt` to maximise Docker layer caching (torch ~2.5 GB stays cached across code changes).
 
@@ -42,33 +37,18 @@ docker compose watch               # enable hot-reload (separate terminal)
 
 **Training pipeline — run in order:**
 ```bash
-docker compose exec trainer python src/1_collect_data.py   # collect 10k transitions
+docker compose exec trainer python src/train_all.py  # runs all steps sequentially
+# or individually:
+docker compose exec trainer python src/1_collect_data.py   # collect 10k transitions locally
 docker compose exec trainer python src/2_train_world.py    # train VAE then MDN-RNN
 docker compose exec trainer python src/3_train_controller.py  # REINFORCE on Controller
-```
-
-**Without Docker** — change `SERVER_URL = "http://localhost:8000"` in each script:
-```bash
-python src/server.py        # terminal 1
-python src/1_collect_data.py  # terminal 2, then 2_, then 3_
 ```
 
 ## Live Dashboards
 
 | URL | Content |
 |---|---|
-| `http://localhost:8000/ui` | MiniGrid live view (~5 fps, pixelated upscale) |
-| `http://localhost:8000/docs` | FastAPI auto-generated OpenAPI docs |
 | `http://localhost:6006` | TensorBoard — training curves |
-
-## API Contract (`env_server`)
-
-| Method | Endpoint | Body | Response |
-|---|---|---|---|
-| `GET` | `/reset` | — | `{ "obs": [[[int]]] }` (7×7×3) |
-| `POST` | `/step` | `{ "action": int }` | `{ "obs", "reward": float, "done": bool }` |
-| `GET` | `/render` | — | PNG image (current frame, no-cache) |
-| `GET` | `/ui` | — | HTML dashboard |
 
 ## TensorBoard Metrics
 
@@ -89,8 +69,6 @@ Logs written to `runs/world_model/` and `runs/controller/`, mounted as a host vo
 
 | Service | Trigger | Action |
 |---|---|---|
-| `env_server` | `src/server.py` | `sync+restart` — FastAPI restarts |
-| `env_server` | `requirements.server.txt` | `rebuild` |
 | `trainer` | `src/` | `sync` — files copied, scripts re-run manually |
 | `trainer` | `requirements.trainer.txt` | `rebuild` |
 

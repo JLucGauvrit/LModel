@@ -4,13 +4,13 @@ Ce projet est la première étape de conception d'un **World Model** (Ha & Schmi
 
 ## Architecture V-M-C
 
-Le système est une architecture **Vision–Mémoire–Contrôleur** distribuée en deux conteneurs Docker :
+Le système est une architecture **Vision–Mémoire–Contrôleur** avec environnement local :
 
 ```
-env_server ──REST API──► trainer
- (FastAPI +              (PyTorch)
-  MiniGrid)
+trainer (PyTorch + MiniGrid)
 ```
+
+L'environnement MiniGrid est instancié localement dans le conteneur trainer pour des performances optimales.
 
 ### Composants
 
@@ -20,12 +20,7 @@ env_server ──REST API──► trainer
 | M (Mémoire) | `MDNRNN` | `models/mdn_rnn.py` | LSTMCell + MDN — prédit p(z_{t+1} \| z_t, a_t) |
 | C (Contrôleur) | `Controller` | `models/controller.py` | Linéaire — [z, h] → 7 actions discrètes |
 
-### API REST (`env_server`, port 8000)
-
-| Méthode | Endpoint | Corps | Réponse |
-|---|---|---|---|
-| `GET` | `/reset` | — | `{ "obs": [[[int]]] }` (7×7×3) |
-| `POST` | `/step` | `{ "action": int }` | `{ "obs", "reward": float, "done": bool }` |
+L'API n'est plus utilisée pour l'entraînement ; les scripts instancient l'environnement localement.
 
 ## Structure des fichiers
 
@@ -36,13 +31,13 @@ src/
 │   ├── vae.py           # VAE (β-VAE, loss ELBO)
 │   ├── mdn_rnn.py       # LSTM + Mixture Density Network
 │   └── controller.py    # Contrôleur linéaire
-├── server.py            # Serveur FastAPI + MiniGrid
-├── utils.py             # Normalisation obs, retry HTTP, constantes
+├── utils.py             # Normalisation obs, constantes
 ├── 1_collect_data.py    # Collecte 10 000 transitions aléatoires → data/
 ├── 2_train_world.py     # Entraîne VAE puis MDN-RNN → checkpoints/
 └── 3_train_controller.py # REINFORCE sur le Contrôleur → checkpoints/
 data/                    # Créé à l'exécution (monté en volume Docker)
 checkpoints/             # Créé à l'exécution (monté en volume Docker)
+runs/                    # Logs TensorBoard (monté en volume Docker)
 ```
 
 ## Lancer le projet
@@ -50,7 +45,7 @@ checkpoints/             # Créé à l'exécution (monté en volume Docker)
 ### Démarrage de l'infrastructure
 
 ```bash
-# Construit les images et démarre env_server + trainer (en arrière-plan)
+# Construit les images et démarre trainer + tensorboard (en arrière-plan)
 docker compose up -d --build
 ```
 
@@ -79,26 +74,14 @@ docker compose exec trainer python src/3_train_controller.py
 
 Produit `checkpoints/controller.pt`, mis à jour tous les 100 épisodes.
 
-### Sans Docker
-
-```bash
-# Terminal 1
-python src/server.py
-
-# Terminal 2 — modifier SERVER_URL = "http://localhost:8000" dans utils.py ou les scripts
-python src/1_collect_data.py
-python src/2_train_world.py
-python src/3_train_controller.py
-```
-
 ## Progression de l'implémentation
 
-- [x] Serveur MiniGrid (FastAPI)
+- [x] Environnement MiniGrid local
 - [x] Modèle V — VAE (encodeur CNN, loss ELBO)
 - [x] Modèle M — MDN-RNN (LSTM + Mixture of Gaussians)
 - [x] Modèle C — Contrôleur linéaire (REINFORCE)
 - [x] Pipeline de collecte de données
 - [x] Pipeline d'entraînement modulaire (3 scripts)
 - [ ] Calcul de la loss RL complète (reward model)
-- [ ] Entraînement dans le monde imaginé (sans env_server)
+- [ ] Entraînement dans le monde imaginé
 - [ ] Évaluation quantitative (reward cumulatif, courbes)
