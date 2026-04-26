@@ -60,7 +60,16 @@ _UI_HTML = """<!DOCTYPE html>
     }
     .bar-bg { background: #21262d; border-radius: 4px; height: 8px; overflow: hidden; }
     .bar    { height: 100%; background: #3fb950; border-radius: 4px; transition: width 0.5s; }
-    .eta    { font-size: 0.78rem; color: #6e7681; margin-top: 0.5rem; text-align: right; }
+    .time-block { display: flex; gap: 1rem; margin-top: 1rem; }
+    .time-item {
+      flex: 1; background: #0d1117; border: 1px solid #30363d;
+      border-radius: 6px; padding: 0.5rem 0.8rem;
+    }
+    .time-label { display: block; font-size: 0.68rem; color: #6e7681;
+                  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
+    .time-value { display: block; font-size: 1.15rem; color: #e6edf3;
+                  letter-spacing: 2px; }
+    .time-value.eta-active { color: #58a6ff; }
     .metrics { display: flex; gap: 2rem; margin-top: 1.2rem; }
     .metric { font-size: 0.78rem; color: #6e7681; }
     .metric span { display: block; color: #e6edf3; font-size: 1rem; margin-bottom: 2px; }
@@ -157,7 +166,16 @@ _UI_HTML = """<!DOCTYPE html>
         <div class="card-header"><div class="label">${d.label}</div><div class="steps">${dots}</div></div>
         <div class="progress-row"><span>Iteration ${d.current} / ${d.total}</span><span>${pct}%</span></div>
         <div class="bar-bg"><div class="bar" style="width:${pct}%"></div></div>
-        ${d.eta ? `<div class="eta">ETA ${d.eta}</div>` : ''}
+        <div class="time-block">
+          <div class="time-item">
+            <span class="time-label">Écoulé</span>
+            <span class="time-value">${d.elapsed || '—'}</span>
+          </div>
+          <div class="time-item">
+            <span class="time-label">Restant estimé</span>
+            <span class="time-value${d.eta ? ' eta-active' : ''}">${d.eta || '—'}</span>
+          </div>
+        </div>
         ${metrics ? `<div class="metrics">${metrics}</div>` : ''}
         <div class="updated">mis a jour ${d.updated}</div>`;
       updateCharts(d.history || []);

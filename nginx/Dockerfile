@@ -1,8 +1,7 @@
 FROM nginx:1.27-alpine
-RUN apk add --no-cache openssl && \
-    mkdir -p /etc/nginx/ssl && \
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-      -keyout /etc/nginx/ssl/key.pem \
-      -out  /etc/nginx/ssl/cert.pem \
-      -subj "/CN=localhost/O=WorldModelFPGA"
+RUN apk add --no-cache openssl
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY portal.html /usr/share/nginx/html/portal.html
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

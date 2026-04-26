@@ -148,9 +148,10 @@ def compute_dream_returns(rewards: torch.Tensor, gamma: float = GAMMA) -> torch.
     for t in reversed(range(T)):
         G = rewards[t] + gamma * G
         returns[t] = G
-    mean = returns.mean(dim=0, keepdim=True)
-    std  = returns.std(dim=0, keepdim=True).clamp(min=1e-5)
-    return (returns - mean) / (std + 1e-8)
+    std = returns.std()
+    if std > 1e-5:
+        returns = (returns - returns.mean()) / (std + 1e-8)
+    return returns
 
 
 def collect_dream_rollouts(
@@ -187,12 +188,17 @@ def collect_dream_rollouts(
     z   = z_pool[idx].to(device)
     h, c = mdn_rnn.init_hidden(num_envs, device)
 
+    # Masque les actions inutiles (pickup=3, drop=4, toggle=5, done=6)
+    nav_mask = torch.tensor([0., 0., 0., -1e9, -1e9, -1e9, -1e9], device=device)
+
     lp_steps: list[torch.Tensor] = []
     en_steps: list[torch.Tensor] = []
     r_steps:  list[torch.Tensor] = []
 
+    prev_actions = torch.full((num_envs,), -1, dtype=torch.long, device=device)
+
     for _ in range(dream_steps):
-        logits  = controller(z, h)
+        logits  = controller(z, h) + nav_mask
         dist    = torch.distributions.Categorical(logits=logits)
         actions = dist.sample()
         lp_steps.append(dist.log_prob(actions))   # (N,)
@@ -202,7 +208,11 @@ def collect_dream_rollouts(
             pi, mu, sigma, r_pred, h, c = mdn_rnn(z, actions, h, c)
             z = MDNRNN.sample_latent(pi, mu, sigma)
 
-        r_steps.append(r_pred.squeeze(-1))         # (N,)
+        # Pénalise le sur-place : même action de rotation (0=gauche, 1=droite) répétée
+        spin = (actions == prev_actions) & (actions <= 1)
+        reward = r_pred.squeeze(-1) - 0.1 * spin.float()
+        r_steps.append(reward)                     # (N,)
+        prev_actions = actions
 
     # (T, N) — aucun loop per-env
     return (
@@ -261,10 +271,7 @@ def train_controller() -> None:
 
         returns = compute_dream_returns(rewards)  # (T, N), normalisé par rêve
 
-        # REINFORCE : loss moyennée sur T×N transitions
-        policy_loss  = -(log_probs * returns).sum() / NUM_ENVS
-        entropy_loss = -ENTROPY_COEFF * entropies.mean()
-        loss = policy_loss + entropy_loss
+        loss = -(log_probs * returns).sum() - ENTROPY_COEFF * entropies.sum()
 
         optimizer.zero_grad()
         loss.backward()

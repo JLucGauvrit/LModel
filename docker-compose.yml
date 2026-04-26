@@ -89,7 +89,9 @@ services:
     container_name: minigrid_nginx
     ports:
       - "80:80"     # HTTP  → redirige vers HTTPS
-      - "443:443"   # HTTPS → https://localhost
+      - "443:443"   # HTTPS → https://localhost (ou IP LAN)
+    environment:
+      - HOST_IPS=${HOST_IPS:-}
     depends_on:
       - dashboard
       - tensorboard

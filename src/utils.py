@@ -9,6 +9,7 @@ Toutes les constantes sont surchargeables via variables d'environnement
 import datetime
 import json
 import os
+import time
 
 import numpy as np
 import torch
@@ -68,6 +69,7 @@ def obs_array_to_tensor(
 _STATUS_PATH = os.path.join("runs", "status.json")
 _history: list[dict] = []
 _current_label: str = ""
+_phase_start: float = 0.0
 
 
 def write_status(
@@ -101,15 +103,21 @@ def write_status(
     :type eta: str | None
     :returns: None
     """
-    global _history, _current_label
+    global _history, _current_label, _phase_start
 
     if label != _current_label:
         _history = []
         _current_label = label
+        _phase_start = time.time()
 
     point: dict = {"x": current}
     point.update(metrics or {})
     _history.append(point)
+
+    elapsed_sec = time.time() - _phase_start
+    elapsed = (f"{int(elapsed_sec // 3600):02d}:"
+               f"{int((elapsed_sec % 3600) // 60):02d}:"
+               f"{int(elapsed_sec % 60):02d}")
 
     os.makedirs("runs", exist_ok=True)
     payload = {
@@ -118,6 +126,7 @@ def write_status(
         "current": current,
         "total": total,
         "metrics": metrics or {},
+        "elapsed": elapsed,
         "eta": eta or "",
         "updated": datetime.datetime.now().strftime("%H:%M:%S"),
         "history": _history,

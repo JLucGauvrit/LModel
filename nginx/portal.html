@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>V-M-C — World Model FPGA</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      font-family: 'Courier New', Courier, monospace;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    nav {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      align-items: center;
+      padding: 0 1.5rem;
+      height: 46px;
+      flex-shrink: 0;
+      gap: 2rem;
+    }
+    .logo {
+      color: #58a6ff;
+      font-size: .9rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .tabs {
+      display: flex;
+    }
+    .tab {
+      padding: 0 1.2rem;
+      height: 46px;
+      display: flex;
+      align-items: center;
+      gap: .45rem;
+      cursor: pointer;
+      color: #6e7681;
+      font-size: .82rem;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      border-bottom: 2px solid transparent;
+      transition: color .15s, border-color .15s;
+      user-select: none;
+    }
+    .tab:hover { color: #c9d1d9; }
+    .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #30363d;
+      transition: background .2s;
+    }
+    .tab.active .dot { background: #58a6ff; }
+    .panels { flex: 1; position: relative; }
+    iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: none;
+    }
+    iframe.active { display: block; }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo">&#9889; V-M-C</div>
+    <div class="tabs">
+      <div class="tab active" data-tab="dashboard">
+        <span class="dot"></span>Dashboard
+      </div>
+      <div class="tab" data-tab="inference">
+        <span class="dot"></span>Inférence
+      </div>
+      <div class="tab" data-tab="tensorboard">
+        <span class="dot"></span>TensorBoard
+      </div>
+    </div>
+  </nav>
+
+  <div class="panels">
+    <iframe id="dashboard"    class="active" src="/dashboard/ui"></iframe>
+    <iframe id="inference"    src="about:blank"></iframe>
+    <iframe id="tensorboard"  src="about:blank"></iframe>
+  </div>
+
+  <script>
+    const SRCS = {
+      dashboard:   '/dashboard/ui',
+      inference:   '/inference/',
+      tensorboard: '/tensorboard/',
+    };
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const name = tab.dataset.tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('iframe').forEach(f => f.classList.remove('active'));
+        tab.classList.add('active');
+        const frame = document.getElementById(name);
+        if (frame.src === 'about:blank') frame.src = SRCS[name];
+        frame.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>
