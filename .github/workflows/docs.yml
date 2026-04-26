@@ -27,9 +27,9 @@ jobs:
       - name: Install torch (CPU)
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-      # Dépendances server (gymnasium, minigrid, fastapi, pillow…)
-      - name: Install server dependencies
-        run: pip install -r requirements.server.txt
+      # Dépendances inference (gymnasium, minigrid, fastapi, pillow…)
+      - name: Install inference dependencies
+        run: pip install -r requirements.inference.txt
 
       # Dépendances trainer (numpy, requests, tensorboard, pdoc)
       - name: Install trainer dependencies
@@ -40,7 +40,8 @@ jobs:
           PYTHONPATH: src
         run: |
           pdoc \
-            src/server.py \
+            frontend/server.py \
+            frontend/inference_ui.py \
             src/utils.py \
             src/1_collect_data.py \
             src/2_train_world.py \
