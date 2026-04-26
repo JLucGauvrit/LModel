@@ -25,6 +25,7 @@ One image for training and monitoring:
 | Dockerfile | Service | Key deps |
 |---|---|---|
 | `Dockerfile.trainer` | `trainer` + `tensorboard` | torch (CUDA 12.4), numpy, tensorboard, pdoc, gymnasium, minigrid |
+| `nginx/Dockerfile` | `nginx` | nginx:alpine + openssl (cert auto-signé généré au build) |
 
 `Dockerfile.trainer` installs torch in a separate layer before `requirements.trainer.txt` to maximise Docker layer caching (torch ~2.5 GB stays cached across code changes).
 
@@ -46,9 +47,14 @@ docker compose exec trainer python src/3_train_controller.py  # REINFORCE on Con
 
 ## Live Dashboards
 
+Tout passe par le reverse proxy Nginx (HTTPS, cert auto-signé).
+
 | URL | Content |
 |---|---|
-| `http://localhost:6006` | TensorBoard — training curves |
+| `https://localhost/` | Redirige vers le dashboard d'entraînement |
+| `https://localhost/dashboard/ui` | Dashboard V-M-C (supervision epochs) |
+| `https://localhost/tensorboard/` | TensorBoard — training curves |
+| `https://localhost/inference/` | UI inférence de l'agent |
 
 ## TensorBoard Metrics
 

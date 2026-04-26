@@ -23,20 +23,20 @@ class VAE(nn.Module):
 
         # Encoder : (B, 3, 7, 7) → (B, latent_dim*2)
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1),   # → (B, 64, 4, 4)
+            nn.Conv2d(3, 128, kernel_size=3, stride=2, padding=1),  # → (B, 128, 4, 4)
             nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1), # → (B, 128, 2, 2)
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1), # → (B, 256, 2, 2)
             nn.ReLU(),
-            nn.Flatten(),                                            # → (B, 512)
-            nn.Linear(512, latent_dim * 2),
+            nn.Flatten(),                                             # → (B, 1024)
+            nn.Linear(1024, latent_dim * 2),
         )
 
         # Decoder : (B, latent_dim) → (B, 3, 7, 7)
-        self.decoder_fc = nn.Linear(latent_dim, 512)
+        self.decoder_fc = nn.Linear(latent_dim, 1024)
         self.decoder_conv = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1), # → (B, 64, 4, 4)
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1), # → (B, 128, 4, 4)
             nn.ReLU(),
-            nn.ConvTranspose2d(64, 3, kernel_size=3, stride=2, padding=1),   # → (B, 3, 7, 7)
+            nn.ConvTranspose2d(128, 3, kernel_size=3, stride=2, padding=1),   # → (B, 3, 7, 7)
             nn.Sigmoid(),
         )
 
@@ -81,7 +81,7 @@ class VAE(nn.Module):
         :returns: Observation reconstruite dans [0, 1], shape (B, 3, 7, 7).
         :rtype: torch.Tensor
         """
-        h = F.relu(self.decoder_fc(z)).view(-1, 128, 2, 2)
+        h = F.relu(self.decoder_fc(z)).view(-1, 256, 2, 2)
         return self.decoder_conv(h)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

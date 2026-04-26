@@ -29,8 +29,6 @@ ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONPATH=/root/.local/lib/python3.10/site-packages:$PYTHONPATH
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-# Force l'utilisation du GPU le plus puissant (RTX 2060 SUPER = device 1)
-# Commentez cette ligne pour utiliser tous les GPUs
-ENV CUDA_VISIBLE_DEVICES=0,1
+# CUDA_VISIBLE_DEVICES est défini dans .env (valeur par défaut : 0,1)
 
 CMD ["python", "src/3_train_controller.py"]

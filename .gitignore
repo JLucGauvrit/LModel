@@ -1,3 +1,5 @@
 .claude/
 data/
 runs/
+__pycache__/
+.env

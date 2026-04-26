@@ -3,3 +3,4 @@ pdoc
 tensorboard
 gymnasium
 minigrid
+python-dotenv
