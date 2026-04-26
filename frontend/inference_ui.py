@@ -559,7 +559,7 @@ _HTML = f"""<!DOCTYPE html>
     document.getElementById("error-box").style.display = "none";
     _prevLogLen = 0; _prevMediaLen = 0; _prevEpLen = 0;
 
-    fetch("/run", {{
+    fetch("/inference/run", {{
       method: "POST",
       headers: {{"Content-Type": "application/json"}},
       body: JSON.stringify({{episodes, greedy, env_id}})
@@ -571,7 +571,7 @@ _HTML = f"""<!DOCTYPE html>
 
   async function poll() {{
     let d;
-    try {{ d = await fetch("/status").then(r => r.json()); }}
+    try {{ d = await fetch("/inference/status").then(r => r.json()); }}
     catch (_) {{ return; }}
 
     const s = d.status;
@@ -647,12 +647,12 @@ _HTML = f"""<!DOCTYPE html>
         const f = media[i];
         if (f.endsWith(".gif")) {{
           gallery.innerHTML += `<figure>
-            <img src="/media/${{f}}?t=${{Date.now()}}" alt="${{f}}">
+            <img src="/inference/media/${{f}}?t=${{Date.now()}}" alt="${{f}}">
             <figcaption>${{f}}</figcaption>
           </figure>`;
         }} else if (f === "vae_reconstruction.png") {{
           const img = document.getElementById("vae-img");
-          img.src = "/media/vae_reconstruction.png?t=" + Date.now();
+          img.src = "/inference/media/vae_reconstruction.png?t=" + Date.now();
           img.style.display = "block";
         }}
       }}

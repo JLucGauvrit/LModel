@@ -91,7 +91,7 @@ _UI_HTML = """<!DOCTYPE html>
 
   <div class="footer">
     Courbes détaillées &rarr;
-    <a href="http://localhost:6006" target="_blank">TensorBoard :6006</a>
+    <a href="/tensorboard/" target="_blank">TensorBoard</a>
   </div>
 
   <script>
@@ -163,7 +163,7 @@ _UI_HTML = """<!DOCTYPE html>
       updateCharts(d.history || []);
     }
 
-    const es = new EventSource('/events');
+    const es = new EventSource('/dashboard/events');
     es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (_) {} };
   </script>
 </body>

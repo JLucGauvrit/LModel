@@ -34,9 +34,7 @@ services:
       context: .
       dockerfile: Dockerfile.trainer
     container_name: minigrid_tensorboard
-    command: tensorboard --logdir /app/runs --host 0.0.0.0 --port 6006 --load_fast=false
-    ports:
-      - "6006:6006"    # Dashboard métriques : http://localhost:6006
+    command: tensorboard --logdir /app/runs --host 0.0.0.0 --port 6006 --load_fast=false --path_prefix /tensorboard
     volumes:
       - ./runs:/app/runs
 
@@ -45,8 +43,6 @@ services:
       context: .
       dockerfile: Dockerfile.inference
     container_name: minigrid_inference
-    ports:
-      - "8080:8080"    # UI inférence : http://localhost:8080
     env_file: .env
     environment:
       CUDA_VISIBLE_DEVICES: "1"   # RTX 2060 SUPER uniquement (override .env)
@@ -79,8 +75,6 @@ services:
       context: .
       dockerfile: Dockerfile.server
     container_name: minigrid_dashboard
-    ports:
-      - "8000:8000"    # Supervision epochs : http://localhost:8000/ui
     volumes:
       - ./runs:/app/runs:ro
     develop:
@@ -88,3 +82,15 @@ services:
         - path: ./frontend/server.py
           action: sync+restart
           target: /app/frontend/server.py
+
+  nginx:
+    build:
+      context: ./nginx
+    container_name: minigrid_nginx
+    ports:
+      - "80:80"     # HTTP  → redirige vers HTTPS
+      - "443:443"   # HTTPS → https://localhost
+    depends_on:
+      - dashboard
+      - tensorboard
+      - inference
