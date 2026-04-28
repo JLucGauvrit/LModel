@@ -271,6 +271,17 @@ app = FastAPI(title="V-M-C Inference UI")
 
 
 class RunConfig(BaseModel):
+    """
+    Paramètres d'un run d'inférence.
+
+    :param episodes: Nombre d'épisodes à jouer.
+    :type episodes: int
+    :param greedy: Si True, l'agent choisit l'action de plus haute probabilité.
+    :type greedy: bool
+    :param env_id: Identifiant de l'environnement Gymnasium.
+    :type env_id: str
+    """
+
     episodes: int = 5
     greedy: bool = True
     env_id: str = "MiniGrid-Empty-8x8-v0"
@@ -278,6 +289,17 @@ class RunConfig(BaseModel):
 
 @app.post("/run")
 def start_run(cfg: RunConfig) -> JSONResponse:
+    """
+    Lance un run d'inférence dans un thread démon.
+
+    Refuse si un run est déjà en cours (HTTP 409).
+
+    :param cfg: Configuration du run (épisodes, politique, environnement).
+    :type cfg: RunConfig
+    :returns: ``{"started": true}`` si le thread a démarré.
+    :rtype: JSONResponse
+    :raises HTTPException: 409 si un run est déjà en cours.
+    """
     with _lock:
         if _state["status"] == "running":
             raise HTTPException(status_code=409, detail="Un run est déjà en cours.")
@@ -291,12 +313,28 @@ def start_run(cfg: RunConfig) -> JSONResponse:
 
 @app.get("/status")
 def get_status() -> JSONResponse:
+    """
+    Retourne l'état courant du run d'inférence.
+
+    :returns: Snapshot thread-safe de ``_state`` : status, config, progress,
+              log, episodes, media, error.
+    :rtype: JSONResponse
+    """
     with _lock:
         return JSONResponse(dict(_state))
 
 
 @app.get("/media/{filename}")
 def get_media(filename: str) -> FileResponse:
+    """
+    Sert un fichier GIF ou PNG généré par le run d'inférence.
+
+    :param filename: Nom du fichier dans ``data/test/``.
+    :type filename: str
+    :returns: Fichier image (``image/gif`` ou ``image/png``).
+    :rtype: FileResponse
+    :raises HTTPException: 404 si le fichier n'existe pas.
+    """
     path = OUTPUT_DIR / filename
     if not path.exists():
         raise HTTPException(status_code=404)
@@ -306,6 +344,12 @@ def get_media(filename: str) -> FileResponse:
 
 @app.get("/", response_class=HTMLResponse)
 def ui() -> str:
+    """
+    Sert l'interface HTML de l'UI d'inférence.
+
+    :returns: Page HTML complète.
+    :rtype: str
+    """
     return _HTML
 
 
