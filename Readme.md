@@ -78,10 +78,11 @@ Produit `checkpoints/controller.pt`, mis à jour tous les 100 épisodes.
 
 - [x] Environnement MiniGrid local
 - [x] Modèle V — VAE (encodeur CNN, loss ELBO)
-- [x] Modèle M — MDN-RNN (LSTM + Mixture of Gaussians)
+- [x] Modèle M — MDN-RNN (LSTM + Mixture of Gaussians + reward_head)
 - [x] Modèle C — Contrôleur linéaire (REINFORCE)
-- [x] Pipeline de collecte de données
+- [x] Pipeline de collecte de données (reward shaping Manhattan-distance)
 - [x] Pipeline d'entraînement modulaire (3 scripts)
-- [ ] Calcul de la loss RL complète (reward model)
-- [ ] Entraînement dans le monde imaginé
-- [ ] Évaluation quantitative (reward cumulatif, courbes)
+- [x] Reward model — MDN-RNN prédit r_t via `reward_head` (MSE)
+- [x] Entraînement dans le monde imaginé — `collect_dream_rollouts` (GPU only, pas de vrai env)
+- [x] Stabilisation REINFORCE — masque actions 3–6, pénalité de sur-place, normalisation robuste
+- [ ] Évaluation quantitative (reward cumulatif en environnement réel, courbes de convergence)
