@@ -191,30 +191,29 @@ def collect_dream_rollouts(
     # Masque les actions inutiles (pickup=3, drop=4, toggle=5, done=6)
     nav_mask = torch.tensor([0., 0., 0., -1e9, -1e9, -1e9, -1e9], device=device)
 
+    # Tracks which dream environments are still "alive" (not yet terminated)
+    alive = torch.ones(num_envs, device=device)
+
     lp_steps: list[torch.Tensor] = []
     en_steps: list[torch.Tensor] = []
     r_steps:  list[torch.Tensor] = []
-
-    prev_actions = torch.full((num_envs,), -1, dtype=torch.long, device=device)
 
     for _ in range(dream_steps):
         logits  = controller(z, h) + nav_mask
         dist    = torch.distributions.Categorical(logits=logits)
         actions = dist.sample()
-        lp_steps.append(dist.log_prob(actions))   # (N,)
-        en_steps.append(dist.entropy())            # (N,)
+        lp_steps.append(dist.log_prob(actions) * alive)   # zero gradient for dead envs
+        en_steps.append(dist.entropy() * alive)
 
         with torch.no_grad():
-            pi, mu, sigma, r_pred, h, c = mdn_rnn(z, actions, h, c)
+            pi, mu, sigma, r_pred, done_pred, h, c = mdn_rnn(z, actions, h, c)
             z = MDNRNN.sample_latent(pi, mu, sigma)
 
-        # Pénalise le sur-place : même action de rotation (0=gauche, 1=droite) répétée
-        spin = (actions == prev_actions) & (actions <= 1)
-        reward = r_pred.squeeze(-1) - 0.1 * spin.float()
-        r_steps.append(reward)                     # (N,)
-        prev_actions = actions
+        r_steps.append((r_pred.squeeze(-1) - 0.01) * alive)
 
-    # (T, N) — aucun loop per-env
+        # Soft-mask: smoothly zero-out envs where done is predicted
+        alive = alive * (1.0 - done_pred.squeeze(-1).detach())
+
     return (
         torch.stack(lp_steps),
         torch.stack(en_steps),
