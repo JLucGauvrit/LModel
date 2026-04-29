@@ -34,54 +34,43 @@ from utils import write_status  # charge aussi load_dotenv()
 DATA_DIR = "data"
 
 
-class DistanceRewardWrapper(gym.Wrapper):
+class ExplorationRewardWrapper(gym.Wrapper):
     """
-    Ajoute une récompense dense basée sur le potentiel de distance Manhattan
-    vers le but : r_shaping = (d_prev - d_new) * SHAPING_SCALE.
-
-    Positif quand l'agent se rapproche, négatif quand il s'éloigne.
-    Ne remplace pas la récompense terminale (reward != 0).
-
-    :param env: Environnement MiniGrid à envelopper.
-    :type env: gym.Env
+    Motivation intrinsèque : donne +0.05 pour la découverte d'une nouvelle case,
+    et -0.01 si l'agent fait du sur-place (mur ou rotation).
+    La récompense terminale (reward > 0, but atteint) est passée telle quelle.
     """
-
-    SHAPING_SCALE: float = 0.1
 
     def __init__(self, env: gym.Env) -> None:
         super().__init__(env)
-        self._goal_pos: tuple[int, int] | None = None
-        self._prev_dist: float = 0.0
+        self.visited: set = set()
+        self.last_pos: tuple | None = None
 
-    def reset(self, **kwargs: Any) -> tuple:
+    def reset(self, **kwargs) -> tuple:
         obs, info = self.env.reset(**kwargs)
-        self._goal_pos = self._find_goal()
-        self._prev_dist = self._manhattan(self.env.unwrapped.agent_pos)
+        self.visited = set()
+        self.last_pos = tuple(self.env.unwrapped.agent_pos)
+        self.visited.add(self.last_pos)
         return obs, info
 
     def step(self, action: int) -> tuple:
         obs, reward, term, trunc, info = self.env.step(action)
-        if reward == 0 and self._goal_pos is not None:
-            new_dist = self._manhattan(self.env.unwrapped.agent_pos)
-            reward = (self._prev_dist - new_dist) * self.SHAPING_SCALE
-            self._prev_dist = new_dist
-        return obs, reward, term, trunc, info
 
-    def _find_goal(self) -> tuple[int, int] | None:
-        u = self.env.unwrapped
-        if hasattr(u, "goal_pos"):
-            return u.goal_pos
-        for i in range(u.grid.width):
-            for j in range(u.grid.height):
-                cell = u.grid.get(i, j)
-                if cell is not None and cell.type == "goal":
-                    return (i, j)
-        return None
+        if reward > 0:
+            return obs, float(reward), term, trunc, info
 
-    def _manhattan(self, pos: tuple[int, int]) -> float:
-        if self._goal_pos is None:
-            return 0.0
-        return float(abs(pos[0] - self._goal_pos[0]) + abs(pos[1] - self._goal_pos[1]))
+        current_pos = tuple(self.env.unwrapped.agent_pos)
+        shaped_reward = 0.0
+
+        if current_pos not in self.visited:
+            shaped_reward += 0.05
+            self.visited.add(current_pos)
+
+        if current_pos == self.last_pos:
+            shaped_reward -= 0.01
+
+        self.last_pos = current_pos
+        return obs, float(shaped_reward), term, trunc, info
 
 class FullObsResizeWrapper(gym.ObservationWrapper):
     """Pads FullyObsWrapper full-grid image to (7, 7, 3) for VAE compatibility.
@@ -180,7 +169,7 @@ def collect_env(env_name: str, env_id: int, transitions: int, episode_offset: in
     :returns: Nombre d'épisodes sauvegardés.
     :rtype: int
     """
-    env = DistanceRewardWrapper(FullObsResizeWrapper(FullyObsWrapper(gym.make(env_name))))
+    env = ExplorationRewardWrapper(FullObsResizeWrapper(FullyObsWrapper(gym.make(env_name))))
     total = 0
     episode_idx = episode_offset
     global_offset = env_id * TRANSITIONS_PER_ENV
