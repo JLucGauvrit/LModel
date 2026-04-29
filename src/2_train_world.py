@@ -36,10 +36,13 @@ VAE_EPOCHS:    int   = int(os.getenv("VAE_EPOCHS", 80))
 VAE_BATCH:     int   = int(os.getenv("VAE_BATCH",  512))
 VAE_LR:        float = float(os.getenv("VAE_LR",   1e-3))
 
-MDNRNN_EPOCHS: int   = int(os.getenv("MDNRNN_EPOCHS", 80))
-MDNRNN_BATCH:  int   = int(os.getenv("MDNRNN_BATCH",  256))
-MDNRNN_LR:     float = float(os.getenv("MDNRNN_LR",   1e-3))
-SEQ_LEN:       int   = int(os.getenv("SEQ_LEN",       128))
+MDNRNN_EPOCHS:      int   = int(os.getenv("MDNRNN_EPOCHS",      80))
+MDNRNN_BATCH:       int   = int(os.getenv("MDNRNN_BATCH",       256))
+MDNRNN_LR:          float = float(os.getenv("MDNRNN_LR",        1e-3))
+SEQ_LEN:            int   = int(os.getenv("SEQ_LEN",            128))
+REWARD_LOSS_COEFF:  float = float(os.getenv("REWARD_LOSS_COEFF", 100.0))
+REWARD_OVERSAMPLE:  int   = int(os.getenv("REWARD_OVERSAMPLE",   10))
+DONE_LOSS_COEFF:    float = float(os.getenv("DONE_LOSS_COEFF",   50.0))
 
 
 class TransitionDataset(Dataset):
@@ -93,21 +96,38 @@ class EpisodeDataset(Dataset):
             next_obs = d["next_obs"]
             actions = d["actions"].astype(np.int64)
             rewards = d["rewards"].astype(np.float32)
+            # Fallback sur dones si le fichier est ancien (avant Task 1)
+            if "terminated" in d:
+                terminated = d["terminated"].astype(bool)
+            else:
+                terminated = d["dones"].astype(bool)
             T = len(actions)
+            if T < seq_len:
+                continue
             for start in range(0, T - seq_len + 1, seq_len):
                 self.sequences.append((
                     obs[start : start + seq_len],
                     next_obs[start : start + seq_len],
                     actions[start : start + seq_len],
                     rewards[start : start + seq_len],
+                    terminated[start : start + seq_len],
+                ))
+            if T % seq_len != 0:
+                start = T - seq_len
+                self.sequences.append((
+                    obs[start : start + seq_len],
+                    next_obs[start : start + seq_len],
+                    actions[start : start + seq_len],
+                    rewards[start : start + seq_len],
+                    terminated[start : start + seq_len],
                 ))
 
     def __len__(self) -> int:
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> tuple:
-        obs, next_obs, actions, rewards = self.sequences[idx]
-        return obs, next_obs, actions, rewards
+        obs, next_obs, actions, rewards, terminated = self.sequences[idx]
+        return obs, next_obs, actions, rewards, terminated
 
 
 def train_vae(device: torch.device, writer: SummaryWriter) -> VAE:
@@ -226,9 +246,9 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
     t_start = time.time()
     for epoch in range(MDNRNN_EPOCHS):
         mdn_rnn.train()
-        total_loss = 0.0
+        total_loss = total_nll = total_r_loss = total_d_loss = 0.0
 
-        for obs_seq, next_obs_seq, action_seq, reward_seq in loader:
+        for obs_seq, next_obs_seq, action_seq, reward_seq, term_seq in loader:
             B, T = obs_seq.shape[:2]
 
             with torch.no_grad():
@@ -243,15 +263,20 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
             z_next  = z_next_flat.view(B, T, LATENT_DIM)
             actions = action_seq.to(device)
             rewards = reward_seq.to(device)    # (B, T)
+            term    = term_seq.float().to(device)       # (B, T)
 
             h, c = mdn_rnn.init_hidden(B, device)
             seq_loss = torch.tensor(0.0, device=device)
 
             for t in range(T):
-                pi, mu, sigma, r_pred, h, c = mdn_rnn(z[:, t], actions[:, t], h, c)
-                nll = MDNRNN.mdn_loss(pi, mu, sigma, z_next[:, t])
+                pi, mu, sigma, r_pred, done_pred, h, c = mdn_rnn(z[:, t], actions[:, t], h, c)
+                nll    = MDNRNN.mdn_loss(pi, mu, sigma, z_next[:, t])
                 r_loss = F.mse_loss(r_pred.squeeze(-1), rewards[:, t])
-                seq_loss = seq_loss + nll + r_loss
+                d_loss = F.binary_cross_entropy(done_pred.squeeze(-1), term[:, t])
+                seq_loss = seq_loss + nll + REWARD_LOSS_COEFF * r_loss + DONE_LOSS_COEFF * d_loss
+                total_nll    += nll.item()
+                total_r_loss += r_loss.item()
+                total_d_loss += d_loss.item()
 
             loss = seq_loss / T
             optimizer.zero_grad()
@@ -260,16 +285,23 @@ def train_mdn_rnn(vae: VAE, device: torch.device, writer: SummaryWriter) -> MDNR
             optimizer.step()
             total_loss += loss.item()
 
-        avg      = total_loss / len(loader)
         elapsed  = time.time() - t_start
         avg_ep   = elapsed / (epoch + 1)
         remaining = avg_ep * (MDNRNN_EPOCHS - epoch - 1)
         eta      = f"{int(remaining // 3600):02d}:{int((remaining % 3600) // 60):02d}:{int(remaining % 60):02d}"
-        writer.add_scalar("MDNRNN/loss_nll", avg, epoch)
+        n   = len(loader)
+        nT  = n * T
+        writer.add_scalar("MDNRNN/loss_total",  total_loss   / n,   epoch)
+        writer.add_scalar("MDNRNN/loss_nll",    total_nll    / nT,  epoch)
+        writer.add_scalar("MDNRNN/loss_reward", total_r_loss / nT,  epoch)
+        writer.add_scalar("MDNRNN/loss_done",   total_d_loss / nT,  epoch)
         write_status(2, "World Model — MDN-RNN", epoch + 1, MDNRNN_EPOCHS,
-                     {"nll": round(avg, 4)}, eta=eta)
+                     {"nll": round(total_nll / nT, 4),
+                      "r_loss": round(total_r_loss / nT, 4),
+                      "d_loss": round(total_d_loss / nT, 4)}, eta=eta)
         print(f"[MDN-RNN] Epoch {epoch + 1:3d}/{MDNRNN_EPOCHS} | "
-              f"nll={avg:.4f} | {eta} restant")
+              f"nll={total_nll/nT:.4f} | r={total_r_loss/nT:.4f} | "
+              f"done={total_d_loss/nT:.4f} | {eta} restant")
 
     torch.save(mdn_rnn.state_dict(), os.path.join(CHECKPOINT_DIR, "mdn_rnn.pt"))
     print(f"→ MDN-RNN sauvegardé dans {CHECKPOINT_DIR}/mdn_rnn.pt")
