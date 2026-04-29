@@ -83,6 +83,26 @@ class DistanceRewardWrapper(gym.Wrapper):
             return 0.0
         return float(abs(pos[0] - self._goal_pos[0]) + abs(pos[1] - self._goal_pos[1]))
 
+class FullObsResizeWrapper(gym.ObservationWrapper):
+    """Pads FullyObsWrapper full-grid image to (7, 7, 3) for VAE compatibility.
+
+    MiniGrid-Empty-5x5-v0 has a 5×5 total grid (with walls), so FullyObsWrapper
+    gives (5, 5, 3). We zero-pad to the VAE's expected input size (7, 7, 3).
+    Zero cells are interpreted by the VAE as "outside grid boundary".
+    """
+
+    TARGET_H = TARGET_W = 7
+
+    def observation(self, obs: dict) -> dict:
+        img = obs["image"]  # (H, W, 3)
+        H, W, C = img.shape
+        if H == self.TARGET_H and W == self.TARGET_W:
+            return obs
+        padded = np.zeros((self.TARGET_H, self.TARGET_W, C), dtype=img.dtype)
+        padded[:H, :W, :] = img
+        return {**obs, "image": padded}
+
+
 # ── Hyperparamètres — surchargeables via .env ─────────────────────────────────
 MAX_STEPS_PER_EPISODE: int = int(os.getenv("MAX_STEPS_PER_EPISODE", 500))
 TARGET_TRANSITIONS:    int = int(os.getenv("TARGET_TRANSITIONS", 200_000))
@@ -160,7 +180,7 @@ def collect_env(env_name: str, env_id: int, transitions: int, episode_offset: in
     :returns: Nombre d'épisodes sauvegardés.
     :rtype: int
     """
-    env = DistanceRewardWrapper(FullyObsWrapper(gym.make(env_name)))
+    env = DistanceRewardWrapper(FullObsResizeWrapper(FullyObsWrapper(gym.make(env_name))))
     total = 0
     episode_idx = episode_offset
     global_offset = env_id * TRANSITIONS_PER_ENV
